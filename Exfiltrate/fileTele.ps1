@@ -37,6 +37,7 @@ Function FindAndSend {
     }
 
     # Thiết lập định dạng file
+    $FileType = "pdf"
     if($FileType -ne $null){
         $fileExtensions = "*." + $FileType
     } else {
