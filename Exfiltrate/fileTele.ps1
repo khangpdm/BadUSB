@@ -30,7 +30,7 @@ Function FindAndSend {
 
     # Thiết lập thư mục tìm kiếm (Sửa lỗi nối chuỗi đường dẫn)
     if($Path){
-        $foldersToSearch = Join-Path $env:USERPROFILE $Path
+        $foldersToSearch = $Path | ForEach-Object { Join-Path $env:USERPROFILE $_ }
     } else {
         $foldersToSearch = @(
             (Join-Path $env:USERPROFILE "Documents"),
