@@ -48,6 +48,10 @@ function GatherSystemInfo {
         }
     }
 }
+
+# GỌI HÀM LẤY SYSTEM INFO
+GatherSystemInfo
+
 # ============================================
 # PHẦN 2: TẢI VÀ GIẢI NÉN TOOLS
 # ============================================
